@@ -1,0 +1,12 @@
+NerfStudio quickstart: https://web.archive.org/web/20230608030143/https://docs.nerf.studio/en/latest/quickstart/installation.html
+
+1. Install CUDA (replace ubuntu2204 with ubuntu2004, only up to cuDNN): https://gist.github.com/MihailCosmin/affa6b1b71b43787e9228c25fe15aeba
+2. Add "export CUDA_HOME=/usr/local/cuda/cuda-11.8" and "export CUDA_PATH=$CUDA_HOME" to ~/.zshrc
+3. Install NerfStudio (https://web.archive.org/web/20230608030143/https://docs.nerf.studio/en/latest/quickstart/installation.html):
+   pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+   pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+4. Install according to https://github.com/kerrj/lerf
+5. Install ffmpeg (required by ns-process-data):
+   sudo apt install ffmpeg
+6. Install COLMAP (https://docs.nerf.studio/quickstart/custom_dataset.html):
+   conda install -c conda-forge colmap

@@ -1,0 +1,560 @@
+diff --git a/lerf/lerf.py b/lerf/lerf.py
+index 594163d..c1ae7d6 100644
+--- a/lerf/lerf.py
++++ b/lerf/lerf.py
+@@ -22,6 +22,309 @@ from lerf.lerf_fieldheadnames import LERFFieldHeadNames
+ from lerf.lerf_renderers import CLIPRenderer, MeanRenderer
+ 
+ 
++import os
++os.environ['PYOPENGL_PLATFORM'] = 'egl'
++import trimesh
++import pyrender
++from pyrender.constants import RenderFlags
++from PIL import Image as im
++import nerfstudio.utils.poses as pose_utils
++from nerfstudio.data.scene_box import OrientedBox
++from nerfstudio.utils.colormaps import apply_pca_colormap
++import traceback
++from scipy.cluster.vq import kmeans, whiten
++from pprint import pprint
++from nerfstudio.viewer.viewer_elements import ViewerCheckbox
++
++def create_debug_scene(tm_mesh, clip_sample_positions, clip_sample_colors):
++    print("create scene")
++
++    scene = pyrender.Scene(bg_color=[0.5, 0.5, 0.5, 0.5], ambient_light=[1.0, 1.0, 1.0, 1.0])
++
++    # light = pyrender.SpotLight(color=np.ones(3), intensity=3.0, innerConeAngle=np.pi/16.0, outerConeAngle=np.pi/6.0)
++    #light = pyrender.PointLight(color=[1.0, 1.0, 1.0], intensity=20.0)
++    #scene.add(light, pose=camera_pose)
++
++    # bb = tmm.bounding_box_oriented
++    # bb.visual.vertex_colors = trimesh.visual.random_color() #[1.0, 0.0, 0.0, 0.2]
++    # Create pyrender mesh
++
++    print("create skybox")
++
++    # "Skybox" sphere
++    sphere_size = 1.0 * 10.0
++    sphere_mesh = trimesh.creation.uv_sphere()
++    sphere_mesh.vertices *= sphere_size
++    sphere_mesh.visual.vertex_colors = 0.5 + sphere_mesh.vertices / sphere_size * 0.5
++    scene.add(pyrender.Mesh.from_trimesh(sphere_mesh))
++
++    print("add sample spheres")
++
++    for i in range(clip_sample_positions.shape[0]):
++        position = clip_sample_positions[i]
++        color = clip_sample_colors[i]
++
++        sample_pose = np.eye(4)
++        sample_pose[0, 3] = position[0]
++        sample_pose[1, 3] = position[1]
++        sample_pose[2, 3] = position[2]
++
++        sphere_size = 0.025
++        sphere_mesh = trimesh.creation.uv_sphere(count=[3,3])
++        sphere_mesh.vertices *= sphere_size
++        sphere_mesh.visual.vertex_colors = sphere_mesh.vertices * 0.0 + color
++
++        scene.add(pyrender.Mesh.from_trimesh(sphere_mesh), pose=sample_pose)
++
++    print("convert mesh")
++
++    mesh = pyrender.Mesh.from_trimesh(tm_mesh)
++    mesh_pose = np.eye(4)
++
++    print("add mesh")
++
++    scene.add(mesh, pose=mesh_pose)
++
++    return scene
++
++
++def render_debug_scene(pyrenderer, camera, camera_pose, scene):
++    print("add camera")
++
++    camera_node = scene.add(camera, pose=camera_pose)
++
++    print("render scene")
++
++    color, depth = pyrenderer.render(scene, flags=RenderFlags.SKIP_CULL_FACES)
++
++    print("remove camera")
++
++    scene.remove_node(camera_node)
++
++    return color, depth
++
++def sample(lerf_model, tm_mesh):
++    #samples, _ = trimesh.sample.sample_surface_even(tm_mesh, count=128, radius=0.0001, seed=42)
++    #samples, _ = trimesh.sample.sample_surface(tm_mesh, count=128, seed=42)
++    samples, _ = trimesh.sample.sample_surface_even(tm_mesh, radius=0.025, count=10000)
++
++    sample_batch = torch.from_numpy(samples).to(lerf_model.device).reshape((1, -1, 3))
++
++    clip_scales = torch.ones((1, sample_batch.shape[1], 1), device=lerf_model.device)
++    clip_pass = lerf_model.lerf_field.get_clip_at_positions(sample_batch, clip_scales)
++
++    return samples, clip_pass
++
++def load_mesh(file):
++    tm = trimesh.load(file)
++    tmm = list(tm.geometry.values())[0]
++    # Center and normalize
++    # tmm.vertices -= tmm.center_mass
++    tmm.vertices -= tmm.centroid
++    tmm.vertices *= 1.0 / np.max(tmm.extents) * 1.0
++    return tmm
++
++def find_viewpoints(lerf_model, clip_sample_embeddings_kmeans_center):
++    #images = [lerf_model.datamanager.train_dataset[i]["image"].permute(2, 0, 1)[None, ...] for i in range(len(lerf_model.datamanager.train_dataset))]
++    #images = torch.cat(images)
++
++    #for img in images:
++    #    img2 = img.unsqueeze(0)
++
++    if lerf_model.image_embeddings is None:
++        lerf_model.image_embeddings = []
++
++        for i in range(len(lerf_model.datamanager.train_dataset)):
++            img = lerf_model.datamanager.train_dataset[i]["image"]
++
++            # TODO Hardcoded dimensions
++            img = img.reshape(-1, 3, 1024, 1024).to("cuda")
++
++            embedding = None
++            with torch.no_grad():
++                embedding = lerf_model.image_encoder.encode_image(img).detach().cpu().numpy().reshape((-1,))
++
++            embedding = embedding / np.linalg.norm(embedding)
++
++            lerf_model.image_embeddings.append(embedding)
++
++    best_sim = [-1, -1, -1]
++    best_idx = [0, 0, 0]
++
++    for i in range(len(lerf_model.image_embeddings)):
++        embedding = lerf_model.image_embeddings[i]
++        img_idx = lerf_model.datamanager.train_dataset[i]["image_idx"]
++
++        for j in range(3):
++            sim = np.dot(clip_sample_embeddings_kmeans_center[j], embedding)
++
++            if sim > best_sim[j]:
++                best_sim[j] = sim
++                best_idx[j] = img_idx
++
++            #print("SIMILARITY")
++            #print(img_idx)
++            #print(sim)
++
++    for j in range(3):
++        print("Best similarity image")
++        print("Cluster: " + str(j))
++        print("Similarity: " + str(best_sim[j]))
++        print("Image index: " + str(best_idx[j]))
++
++
++def render_debug_view(lerf_model, ns_camera: Cameras):
++    try:
++        width = torch.max(ns_camera.width.view(-1)).item()
++        height = torch.max(ns_camera.height.view(-1)).item()
++
++        c2w = pose_utils.to4x4(ns_camera.camera_to_worlds[0])
++        #c2w[2, :] *= -1
++        #c2w = c2w[np.array([0, 2, 1, 3]), :]
++        camera_pose = c2w.cpu().data.numpy()
++
++        print("load mesh")
++
++        tm_mesh = lerf_model.debug_mesh
++        if tm_mesh is None:
++            tm_mesh = load_mesh("/nas/objaverse-data/hf-objaverse-v1/glbs/000-023/5f65399743bb4db1bd9b08e89b8efd41.glb")
++            lerf_model.debug_mesh = tm_mesh
++
++        clip_sample_positions = lerf_model.clip_sample_positions
++        clip_colors = lerf_model.clip_colors
++
++        if clip_sample_positions is None or clip_colors is None:
++            print("sample embeddings")
++
++            clip_sample_positions, clip_sample_embeddings = sample(lerf_model, tm_mesh)
++
++            clip_sample_embeddings = clip_sample_embeddings.view(-1, clip_sample_embeddings.shape[-1]).float()
++
++            #clip_sample_embeddings_pca = apply_pca_colormap(clip_sample_embeddings)
++
++            clip_sample_embeddings_centered = whiten(clip_sample_embeddings.cpu().data.numpy())
++            clip_sample_embeddings_kmeans_center, clip_sample_embeddings_kmeans_distortion = kmeans(clip_sample_embeddings_centered, 3)
++            clip_sample_embeddings_kmeans_colors = np.zeros((clip_sample_embeddings.shape[0], 3))
++            for i in range(3):
++                clip_sample_embeddings_kmeans_center[i] = clip_sample_embeddings_kmeans_center[i] / np.linalg.norm(clip_sample_embeddings_kmeans_center[i])
++            
++            print("calculate cluster assignments")
++
++            r_embedding = clip_sample_embeddings_kmeans_center[0]
++            g_embedding = clip_sample_embeddings_kmeans_center[1]
++            b_embedding = clip_sample_embeddings_kmeans_center[2]
++
++            
++            for i in range(clip_sample_embeddings.shape[0]):
++                clip_sample_embedding = clip_sample_embeddings_centered[i] / np.linalg.norm(clip_sample_embeddings_centered[i])
++
++                if not lerf_model.hard_assignments:
++                    clip_sample_embeddings_kmeans_colors[i, 0] = np.dot(r_embedding, clip_sample_embedding)
++                    clip_sample_embeddings_kmeans_colors[i, 1] = np.dot(g_embedding, clip_sample_embedding)
++                    clip_sample_embeddings_kmeans_colors[i, 2] = np.dot(b_embedding, clip_sample_embedding)
++                else:
++                    best = -1.0
++
++                    r_sim = np.dot(r_embedding, clip_sample_embedding)
++                    g_sim = np.dot(g_embedding, clip_sample_embedding)
++                    b_sim = np.dot(b_embedding, clip_sample_embedding)
++
++                    if r_sim > best:
++                        best = r_sim
++                        clip_sample_embeddings_kmeans_colors[i, 0] = 1.0
++                        clip_sample_embeddings_kmeans_colors[i, 1] = 0.0
++                        clip_sample_embeddings_kmeans_colors[i, 2] = 0.0
++
++                    if g_sim > best:
++                        best = g_sim
++                        clip_sample_embeddings_kmeans_colors[i, 0] = 0.0
++                        clip_sample_embeddings_kmeans_colors[i, 1] = 1.0
++                        clip_sample_embeddings_kmeans_colors[i, 2] = 0.0
++
++                    if b_sim > best:
++                        best = b_sim
++                        clip_sample_embeddings_kmeans_colors[i, 0] = 0.0
++                        clip_sample_embeddings_kmeans_colors[i, 1] = 0.0
++                        clip_sample_embeddings_kmeans_colors[i, 2] = 1.0
++                    
++
++            
++            #clip_colors = clip_sample_embeddings_pca.cpu().data.numpy()
++            clip_colors = clip_sample_embeddings_kmeans_colors
++
++            lerf_model.clip_sample_positions = clip_sample_positions
++            lerf_model.clip_colors = clip_colors
++
++            print("find best viewpoints")
++
++            find_viewpoints(lerf_model, clip_sample_embeddings_kmeans_center)
++
++            # Invalidate scene due to changed clustering
++            lerf_model.debug_scene = None
++
++
++        print("setup renderer")
++
++        pyrenderer = pyrender.OffscreenRenderer(width, height)
++
++        print("setup camera")
++
++        camera = pyrender.IntrinsicsCamera(fx=ns_camera.fx[0], fy=ns_camera.fy[0], cx=ns_camera.cx[0], cy=ns_camera.cy[0])
++
++        print("setup scene")
++
++        scene = lerf_model.debug_scene
++        if scene is None:
++            scene = create_debug_scene(tm_mesh, clip_sample_positions, clip_colors)
++            lerf_model.debug_scene = scene
++
++        print("render scene")
++
++        color, depth = render_debug_scene(pyrenderer, camera, camera_pose, scene)
++
++        print("copy to device")
++
++        result = torch.from_numpy(color.copy()).to(ns_camera.device)
++        result = result / 255.0
++        # TODO: Seems like "rgb" output is flattened (e.g. [64, 3] where 64=8x8 pixels), but if I do the same it errors later
++        #result = torch.flatten(result, start_dim=0, end_dim=-2)
++
++        print("delete renderer")
++
++        pyrenderer.delete()
++
++        print("done")
++
++        return result
++    except Exception:
++        print("==== ERROR ====")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print(traceback.format_exc())
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("")
++        print("===============")
++
++    return None
++
++
+ @dataclass
+ class LERFModelConfig(NerfactoModelConfig):
+     _target: Type = field(default_factory=lambda: LERFModel)
+@@ -38,6 +341,9 @@ class LERFModelConfig(NerfactoModelConfig):
+ class LERFModel(NerfactoModel):
+     config: LERFModelConfig
+ 
++    clip_sample_positions = None
++    clip_colors = None
++
+     def populate_modules(self):
+         super().populate_modules()
+ 
+@@ -52,6 +358,30 @@ class LERFModel(NerfactoModel):
+             clip_n_dims=self.image_encoder.embedding_dim,
+         )
+ 
++        self.datamanager = self.kwargs["datamanager"]
++        self.image_embeddings = None
++
++        self.enable_debug_renderer_checkbox = ViewerCheckbox("Enable debug renderer", False, cb_hook=self.gui_debug_renderer_checkbox_cb)
++        self.enable_debug_renderer = False
++
++        self.disable_clip_renderer_checkbox = ViewerCheckbox("Disable clip renderer", False, cb_hook=self.gui_clip_renderer_checkbox_cb)
++        self.disable_clip_renderer = False
++
++        self.hard_assignments_checkbox = ViewerCheckbox("Hard cluster assignments", False, cb_hook=self.gui_hard_assignments_checkbox_cb)
++        self.hard_assignments = False
++
++        self.debug_mesh = None
++        self.debug_scene = None
++
++    def gui_debug_renderer_checkbox_cb(self, element):
++        self.enable_debug_renderer = element.value
++
++    def gui_clip_renderer_checkbox_cb(self, element):
++        self.disable_clip_renderer = element.value
++    
++    def gui_hard_assignments_checkbox_cb(self, element):
++        self.hard_assignments = element.value
++
+     def get_max_across(self, ray_samples, weights, hashgrid_field, scales_shape, preset_scales=None):
+         # TODO smoothen this out
+         if preset_scales is not None:
+@@ -84,61 +414,97 @@ class LERFModel(NerfactoModel):
+         return torch.stack(n_phrases_sims), torch.Tensor(n_phrases_maxs)
+ 
+     def get_outputs(self, ray_bundle: RayBundle):
++        if self.training:
++            self.clip_sample_positions = None
++            self.clip_colors = None
++
+         if self.training:
+             self.camera_optimizer.apply_to_raybundle(ray_bundle)
+         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
+         ray_samples_list.append(ray_samples)
+ 
+         nerfacto_field_outputs, outputs, weights = self._get_outputs_nerfacto(ray_samples)
+-        lerf_weights, best_ids = torch.topk(weights, self.config.num_lerf_samples, dim=-2, sorted=False)
+ 
+-        def gather_fn(tens):
+-            return torch.gather(tens, -2, best_ids.expand(*best_ids.shape[:-1], tens.shape[-1]))
++        if not self.disable_clip_renderer:
++            lerf_weights, best_ids = torch.topk(weights, self.config.num_lerf_samples, dim=-2, sorted=False)
+ 
+-        dataclass_fn = lambda dc: dc._apply_fn_to_fields(gather_fn, dataclass_fn)
+-        lerf_samples: RaySamples = ray_samples._apply_fn_to_fields(gather_fn, dataclass_fn)
++            def gather_fn(tens):
++                return torch.gather(tens, -2, best_ids.expand(*best_ids.shape[:-1], tens.shape[-1]))
++
++            dataclass_fn = lambda dc: dc._apply_fn_to_fields(gather_fn, dataclass_fn)
++            lerf_samples: RaySamples = ray_samples._apply_fn_to_fields(gather_fn, dataclass_fn)
++
++            if self.training:
++                with torch.no_grad():
++                    clip_scales = ray_bundle.metadata["clip_scales"]
++                    clip_scales = clip_scales[..., None]
++                    dist = (lerf_samples.frustums.get_positions() - ray_bundle.origins[:, None, :]).norm(
++                        dim=-1, keepdim=True
++                    )
++                clip_scales = clip_scales * ray_bundle.metadata["height"] * (dist / ray_bundle.metadata["fy"])
++            else:
++                clip_scales = torch.ones_like(lerf_samples.spacing_starts, device=self.device)
++
++            override_scales = (
++                None if "override_scales" not in ray_bundle.metadata else ray_bundle.metadata["override_scales"]
++            )
++            weights_list.append(weights)
++            if self.training:
++                outputs["weights_list"] = weights_list
++                outputs["ray_samples_list"] = ray_samples_list
++            for i in range(self.config.num_proposal_iterations):
++                outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
++
++            lerf_field_outputs = self.lerf_field.get_outputs(lerf_samples, clip_scales)
++            outputs["clip"] = self.renderer_clip(
++                embeds=lerf_field_outputs[LERFFieldHeadNames.CLIP], weights=lerf_weights.detach()
++            )
++            outputs["dino"] = self.renderer_mean(
++                embeds=lerf_field_outputs[LERFFieldHeadNames.DINO], weights=lerf_weights.detach()
++            )
++
++            if not self.training:
++                with torch.no_grad():
++                    max_across, best_scales = self.get_max_across(
++                        lerf_samples,
++                        lerf_weights,
++                        lerf_field_outputs[LERFFieldHeadNames.HASHGRID],
++                        clip_scales.shape,
++                        preset_scales=override_scales,
++                    )
++                    outputs["raw_relevancy"] = max_across  # N x B x 1
++                    outputs["best_scales"] = best_scales.to(self.device)  # N
+ 
+-        if self.training:
+-            with torch.no_grad():
+-                clip_scales = ray_bundle.metadata["clip_scales"]
+-                clip_scales = clip_scales[..., None]
+-                dist = (lerf_samples.frustums.get_positions() - ray_bundle.origins[:, None, :]).norm(
+-                    dim=-1, keepdim=True
+-                )
+-            clip_scales = clip_scales * ray_bundle.metadata["height"] * (dist / ray_bundle.metadata["fy"])
+         else:
+-            clip_scales = torch.ones_like(lerf_samples.spacing_starts, device=self.device)
++            weights_list.append(weights)
++            if self.training:
++                outputs["weights_list"] = weights_list
++                outputs["ray_samples_list"] = ray_samples_list
+ 
+-        override_scales = (
+-            None if "override_scales" not in ray_bundle.metadata else ray_bundle.metadata["override_scales"]
+-        )
+-        weights_list.append(weights)
+-        if self.training:
+-            outputs["weights_list"] = weights_list
+-            outputs["ray_samples_list"] = ray_samples_list
+-        for i in range(self.config.num_proposal_iterations):
+-            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
+-
+-        lerf_field_outputs = self.lerf_field.get_outputs(lerf_samples, clip_scales)
+-        outputs["clip"] = self.renderer_clip(
+-            embeds=lerf_field_outputs[LERFFieldHeadNames.CLIP], weights=lerf_weights.detach()
+-        )
+-        outputs["dino"] = self.renderer_mean(
+-            embeds=lerf_field_outputs[LERFFieldHeadNames.DINO], weights=lerf_weights.detach()
+-        )
++        return outputs
+ 
+-        if not self.training:
+-            with torch.no_grad():
+-                max_across, best_scales = self.get_max_across(
+-                    lerf_samples,
+-                    lerf_weights,
+-                    lerf_field_outputs[LERFFieldHeadNames.HASHGRID],
+-                    clip_scales.shape,
+-                    preset_scales=override_scales,
+-                )
+-                outputs["raw_relevancy"] = max_across  # N x B x 1
+-                outputs["best_scales"] = best_scales.to(self.device)  # N
++    @torch.no_grad()
++    def get_outputs_for_camera(self, camera: Cameras, obb_box: Optional[OrientedBox] = None) -> Dict[str, torch.Tensor]:
++        """Takes in a camera, generates the raybundle, and computes the output of the model.
++        Assumes a ray-based model.
+ 
++        Args:
++            camera: generates raybundle
++        """
++        camera_ray_bundle = camera.generate_rays(camera_indices=0, keep_shape=True, obb_box=obb_box)
++
++        outputs = {}
++        
++        if not self.disable_clip_renderer:
++            outputs = self.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
++        else:
++            outputs = super().get_outputs_for_camera_ray_bundle(camera_ray_bundle)
++
++        if self.enable_debug_renderer:
++            debug_view_output = render_debug_view(self, camera)
++            if debug_view_output is not None:
++                outputs['debug'] = debug_view_output
++        
+         return outputs
+ 
+     @torch.no_grad()
+@@ -217,7 +583,7 @@ class LERFModel(NerfactoModel):
+ 
+     def get_loss_dict(self, outputs, batch, metrics_dict=None):
+         loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
+-        if self.training:
++        if self.training and not self.disable_clip_renderer:
+             unreduced_clip = self.config.clip_loss_weight * torch.nn.functional.huber_loss(
+                 outputs["clip"], batch["clip"], delta=1.25, reduction="none"
+             )
+diff --git a/lerf/lerf_field.py b/lerf/lerf_field.py
+index a84bda1..1e1f5fa 100644
+--- a/lerf/lerf_field.py
++++ b/lerf/lerf_field.py
+@@ -31,12 +31,12 @@ except EnvironmentError as _exp:
+ 
+ class LERFField(Field):
+     def __init__(
+-        self,
+-        grid_layers,
+-        grid_sizes,
+-        grid_resolutions,
+-        clip_n_dims: int,
+-        spatial_distortion: SpatialDistortion = SceneContraction(),
++            self,
++            grid_layers,
++            grid_sizes,
++            grid_resolutions,
++            clip_n_dims: int,
++            spatial_distortion: SpatialDistortion = SceneContraction(),
+     ):
+         super().__init__()
+         assert len(grid_layers) == len(grid_sizes) and len(grid_resolutions) == len(grid_layers)
+@@ -112,6 +112,20 @@ class LERFField(Field):
+ 
+         return outputs
+ 
++    def get_clip_at_positions(self, positions, clip_scales):
++        positions = self.spatial_distortion(positions)
++        positions = (positions + 2.0) / 4.0
++
++        xs = [e(positions.view(-1, 3)) for e in self.clip_encs]
++        x = torch.concat(xs, dim=-1)
++
++        clip_pass = self.clip_net(torch.cat([x, clip_scales.view(-1, 1)], dim=-1))
++
++        clip_pass = clip_pass / clip_pass.norm(dim=-1, keepdim=True)
++
++        return clip_pass
++
++
+     def get_output_from_hashgrid(self, ray_samples: RaySamples, hashgrid_field, scale):
+         # designated scales, run outputs for each scale
+         hashgrid_field = hashgrid_field.view(-1, self.clip_net.n_input_dims - 1)
+diff --git a/lerf/lerf_pipeline.py b/lerf/lerf_pipeline.py
+index 307d9f4..7ae0f5a 100644
+--- a/lerf/lerf_pipeline.py
++++ b/lerf/lerf_pipeline.py
+@@ -69,6 +69,7 @@ class LERFPipeline(VanillaPipeline):
+             metadata=self.datamanager.train_dataset.metadata,
+             image_encoder=self.image_encoder,
+             grad_scaler=grad_scaler,
++            datamanager=self.datamanager
+         )
+         self.model.to(device)
+ 

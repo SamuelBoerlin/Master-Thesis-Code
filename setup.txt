@@ -1,0 +1,4 @@
+1. Install miniconda: https://docs.anaconda.com/miniconda/
+2. Create environment `conda create -n ns`
+3. Activate: `conda activate ns`
+4. Install PIP: `conda install pip`
