@@ -86,7 +86,7 @@ class Pipeline:
         output_dir = self.config.get_base_dir()  # FIXME: This has "unnamed" as experiment name...
 
         self.__renderer_output_dir = output_dir / "renderer"
-        self.__renderer_output_dir.mkdir(exist_ok=True)
+        self.__renderer_output_dir.mkdir(parents=True, exist_ok=True)
 
         self.views = self.config.views.setup()
 

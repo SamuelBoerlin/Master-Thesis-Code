@@ -47,7 +47,7 @@ from lerf.encoders.image_encoder import BaseImageEncoder
 @dataclass
 class LERFDataManagerConfig(VanillaDataManagerConfig):
     _target: Type = field(default_factory=lambda: LERFDataManager)
-    patch_tile_size_range: Tuple[int, int] = (0.05, 0.5)
+    patch_tile_size_range: Tuple[float, ...] = (0.05, 0.5)
     patch_tile_size_res: int = 7
     patch_stride_scaler: float = 0.5
 
