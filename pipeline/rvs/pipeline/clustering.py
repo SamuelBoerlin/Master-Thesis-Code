@@ -30,18 +30,27 @@ class Clustering:
 class KMeansClusteringConfig(ClusteringConfig):
     _target: Type = field(default_factory=lambda: KMeansClustering)
 
+    whitening: bool = True
+    """Whether whitening should be done before K-Means clustering"""
+
 
 class KMeansClustering(Clustering):
+    config: KMeansClusteringConfig
+
     def cluster(self, samples: NDArray) -> NDArray:
-        # Do "whitening" manually so we can undo it again afterwards
-        # samples = whiten(samples)
-        std_dev = samples.std(axis=0)
-        samples /= std_dev
+        std_dev: NDArray = None
+
+        if self.config.whitening:
+            # Do "whitening" manually so we can undo it again afterwards
+            # samples = whiten(samples)
+            std_dev = samples.std(axis=0)
+            samples /= std_dev
 
         centroids, _ = kmeans(samples, self.config.num_clusters)
 
-        # Undo "whitening"
-        centroids *= std_dev
+        if self.config.whitening and std_dev is not None:
+            # Undo "whitening"
+            centroids *= std_dev
 
         centroids = centroids / np.linalg.norm(centroids, axis=1, keepdims=True)
 
