@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional, Type
@@ -7,6 +9,7 @@ from lerf.lerf import LERFModel
 from numpy.typing import NDArray
 from torch import Tensor
 
+import rvs.pipeline.pipeline
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.engine.trainer import Trainer, TrainerConfig
 from nerfstudio.models.base_model import ModelConfig
@@ -34,14 +37,27 @@ class Field:
     def __init__(self, config: FieldConfig) -> None:
         self.config = config
 
-    def init(self, data_path: Optional[Path], **kwargs) -> None:
+    def init(
+        self,
+        pipeline_state: rvs.pipeline.pipeline.Pipeline.State,
+        data_path: Optional[Path],
+        output_dir: Optional[Path],
+        **kwargs,
+    ) -> None:
         config = self.config
         if data_path:
             config = self.__replace_data(config, data_path)
-        self.controller = self.config.controller.setup()
+        if output_dir:
+            cache_dir = Path.joinpath(output_dir, "cache", pipeline_state.pipeline.config.model_file.name)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            config = self.__replace_cache_dir(config, cache_dir)
+            output_dir = Path.joinpath(output_dir, "nerf")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            config = self.__replace_output_dir(config, output_dir)
+        self.controller = config.controller.setup()
         config = self.__replace_model(
             config,
-            WrapperModelConfig(wrapper_model=self.config.trainer.pipeline.model, wrapper_hooks=self.controller.hooks),
+            WrapperModelConfig(wrapper_model=config.trainer.pipeline.model, wrapper_hooks=self.controller.hooks),
         )
         self.trainer = config.trainer.setup(**kwargs)
         self.trainer.config.save_config()
@@ -54,14 +70,25 @@ class Field:
         config = replace(config, trainer=trainer)
         return config
 
-    def __replace_model(self, config: FieldConfig, model: ModelConfig) -> ModelConfig:
+    def __replace_output_dir(self, config: FieldConfig, output_dir: Path) -> FieldConfig:
+        trainer = replace(config.trainer, output_dir=output_dir)
+        config = replace(config, trainer=trainer)
+        return config
+
+    def __replace_model(self, config: FieldConfig, model: ModelConfig) -> FieldConfig:
         pipeline = replace(config.trainer.pipeline, model=model)
         trainer = replace(config.trainer, pipeline=pipeline)
         config = replace(config, trainer=trainer)
         return config
 
+    def __replace_cache_dir(self, config: FieldConfig, cache_dir: Path) -> FieldConfig:
+        datamanager = replace(config.trainer.pipeline.datamanager, cache_dir=cache_dir)
+        pipeline = replace(config.trainer.pipeline, datamanager=datamanager)
+        trainer = replace(config.trainer, pipeline=pipeline)
+        config = replace(config, trainer=trainer)
+        return config
+
     def train(self) -> None:
-        # FIXME: LERF model caches clip embeddings under outputs/transforms.json/ which means they get mixed up
         self.trainer.train()
         self.trainer.shutdown()
 

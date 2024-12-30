@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import dataclasses
+import typing
+from dataclasses import replace
 from typing import Dict
 
 import tyro
 from lerf.lerf_config import lerf_method, lerf_method_big, lerf_method_lite
 
 from nerfstudio.engine.trainer import TrainerConfig
+from rvs.lerf.lerf_datamanager import CustomLERFDataManagerConfig
 from rvs.pipeline.clustering import KMeansClusteringConfig
 from rvs.pipeline.pipeline import FieldConfig, PipelineConfig
 from rvs.pipeline.renderer import TrimeshRendererConfig
 from rvs.pipeline.sampler import TrimeshPositionSamplerConfig
 from rvs.pipeline.selection import BestTrainingViewSelectionConfig
 from rvs.pipeline.views import SphereViewsConfig
+from rvs.utils.dataclasses import extend_dataclass_obj
 
 
 def set_default_trainer_params(config: TrainerConfig) -> TrainerConfig:
@@ -28,6 +32,21 @@ def set_default_trainer_params(config: TrainerConfig) -> TrainerConfig:
     return config
 
 
+def replace_lerf_datamanager(config: TrainerConfig) -> TrainerConfig:
+    pipeline = replace(
+        config.pipeline,
+        datamanager=extend_dataclass_obj(config.pipeline.datamanager, CustomLERFDataManagerConfig),
+    )
+    config = replace(config, pipeline=pipeline)
+    return config
+
+
+def adapt_lerf_config(config: TrainerConfig) -> TrainerConfig:
+    config = replace_lerf_datamanager(config)
+    config = set_default_trainer_params(config)
+    return config
+
+
 pipeline_configs: Dict[str, PipelineConfig] = {}
 pipeline_descriptions = {
     "default": "Default model.",
@@ -39,7 +58,7 @@ pipeline_configs["default"] = PipelineConfig(
     method_name="default",
     views=SphereViewsConfig(),
     renderer=TrimeshRendererConfig(),
-    field=FieldConfig(trainer=set_default_trainer_params(lerf_method.config)),
+    field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
     sampler=TrimeshPositionSamplerConfig(),
     clustering=KMeansClusteringConfig(),
     selection=BestTrainingViewSelectionConfig(),
@@ -49,7 +68,7 @@ pipeline_configs["default-lite"] = PipelineConfig(
     method_name="default-lite",
     views=SphereViewsConfig(),
     renderer=TrimeshRendererConfig(),
-    field=FieldConfig(trainer=set_default_trainer_params(lerf_method_lite.config)),
+    field=FieldConfig(trainer=adapt_lerf_config(lerf_method_lite.config)),
     sampler=TrimeshPositionSamplerConfig(),
     clustering=KMeansClusteringConfig(),
     selection=BestTrainingViewSelectionConfig(),
@@ -59,7 +78,7 @@ pipeline_configs["default-big"] = PipelineConfig(
     method_name="default-big",
     views=SphereViewsConfig(),
     renderer=TrimeshRendererConfig(),
-    field=FieldConfig(trainer=set_default_trainer_params(lerf_method_big.config)),
+    field=FieldConfig(trainer=adapt_lerf_config(lerf_method_big.config)),
     sampler=TrimeshPositionSamplerConfig(),
     clustering=KMeansClusteringConfig(),
     selection=BestTrainingViewSelectionConfig(),

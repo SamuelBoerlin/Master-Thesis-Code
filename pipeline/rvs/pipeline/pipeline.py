@@ -56,7 +56,6 @@ class PipelineConfig(ExperimentConfig):
     def propagate_experiment_settings(self):
         self.set_experiment_name()
         self.field.trainer.experiment_name = self.experiment_name
-        self.field.trainer.output_dir = os.path.join(self.get_base_dir(), "nerf")
         self.field.trainer.timestamp = self.timestamp
         self.field.trainer.machine.seed = self.machine.seed
         # TODO: There are some others like method_name, project_name and possibly more that should be propagated
@@ -77,6 +76,7 @@ class Pipeline:
     selection: ViewSelection
 
     __renderer_output_dir: Path
+    __field_output_dir: Path
 
     def __init__(self, config: PipelineConfig, **kwargs) -> None:
         self.config = config
@@ -91,6 +91,9 @@ class Pipeline:
         self.views = self.config.views.setup()
 
         self.renderer = self.config.renderer.setup()
+
+        self.__field_output_dir = output_dir / "field"
+        self.__field_output_dir.mkdir(parents=True, exist_ok=True)
 
         self.field = self.config.field.setup()
 
@@ -125,7 +128,7 @@ class Pipeline:
         )
 
         CONSOLE.log("Training radiance field...")
-        self.field.init(transforms_path, **self.kwargs)
+        self.field.init(pipeline_state, transforms_path, self.__field_output_dir, **self.kwargs)
         self.field.train()
 
         CONSOLE.log("Sampling embeddings...")
