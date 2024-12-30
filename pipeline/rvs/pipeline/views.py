@@ -37,10 +37,10 @@ class SphereViewsConfig(ViewsConfig):
     _target: Type = field(default_factory=lambda: SphereViews)
     """target class to instantiate"""
 
-    azimuth_views: int = 8
+    azimuth_views: int = 16
     """Number of views around azimuthal axis"""
 
-    elevation_views: int = 16
+    elevation_views: int = 8
     """Number of views around elevation axis"""
 
     offset_views: int = 1
@@ -51,6 +51,9 @@ class SphereViewsConfig(ViewsConfig):
 
     offset_max_distance: float = 2.0
     """Maximum distance from center"""
+
+    exclude_poles: bool = True
+    """Whether to exclude the views at the top/bottom poles"""
 
     # TODO: Possibly also include roll angle?
 
@@ -67,8 +70,12 @@ class SphereViews(Views):
         for i in range(0, self.config.azimuth_views):
             for j in range(0, self.config.elevation_views):
                 for k in range(0, self.config.offset_views):
-                    azimuth = np.pi / self.config.azimuth_views * i
-                    elevation = 2.0 * np.pi / self.config.elevation_views * j
+                    azimuth = 2.0 * np.pi / self.config.azimuth_views * i
+                    elevation = 0.0
+                    if self.config.exclude_poles:
+                        elevation = -np.pi * 0.5 + np.pi / (self.config.elevation_views + 1) * (j + 1)
+                    else:
+                        elevation = -np.pi * 0.5 + np.pi / self.config.elevation_views * j
                     roll = 0.0
                     distance = (
                         self.config.offset_min_distance
@@ -97,7 +104,7 @@ class SphereViews(Views):
                         ]
                     )
 
-                    angle_x = np.pi * 0.5 + elevation
+                    angle_x = elevation
                     rot_x = np.array(
                         [
                             [1, 0, 0, 0],
