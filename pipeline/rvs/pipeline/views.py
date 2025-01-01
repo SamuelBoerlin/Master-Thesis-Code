@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import List, Type
+from pathlib import Path
+from typing import List, Optional, Type
 
 import numpy as np
 from nerfstudio.configs.base_config import InstantiateConfig
@@ -15,6 +16,7 @@ class ViewsConfig(InstantiateConfig):
 class View:
     index: int
     transform: NDArray
+    path: Optional[Path]
 
     def __init__(self, index: int, transform: NDArray) -> None:
         self.index = index

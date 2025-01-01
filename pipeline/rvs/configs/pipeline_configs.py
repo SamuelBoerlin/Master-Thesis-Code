@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import dataclasses
-import typing
 from dataclasses import replace
 from typing import Dict
 
 import tyro
 from lerf.lerf_config import lerf_method, lerf_method_big, lerf_method_lite
-
 from nerfstudio.engine.trainer import TrainerConfig
+
 from rvs.lerf.lerf_datamanager import CustomLERFDataManagerConfig
 from rvs.lerf.lerf_model import CustomLERFModelConfig
 from rvs.pipeline.clustering import KMeansClusteringConfig

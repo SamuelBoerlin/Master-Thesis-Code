@@ -7,19 +7,26 @@ from PIL import Image as im
 from rvs.pipeline.views import View
 
 
-def get_frame_name(view: View, frame_name: Optional[str] = None) -> str:
+def get_frame_name(view: Optional[View], frame_name: Optional[str] = None, frame_index: int = 0) -> str:
     if frame_name is None:
         frame_name = "frame_{}.png"
-    return frame_name.format(str(view.index + 1).zfill(5))
+    return frame_name.format(str((view.index + 1) if view is not None else (frame_index + 1)).zfill(5))
 
 
 def save_transforms_frame(
-    dir: Path, view: View, image: im.Image, frame_dir: Path = Path("images/"), frame_name: Optional[str] = None
+    dir: Path,
+    view: View,
+    image: im.Image,
+    frame_dir: Path = Path("images/"),
+    frame_name: Optional[str] = None,
+    set_path: bool = False,
 ) -> Path:
     frame_dir = dir / frame_dir
     frame_dir.mkdir(exist_ok=True)
     frame_path = frame_dir / get_frame_name(view, frame_name)
     image.save(frame_path)
+    if set_path:
+        view.path = frame_path
     return frame_path
 
 

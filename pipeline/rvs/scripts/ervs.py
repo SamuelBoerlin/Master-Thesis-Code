@@ -5,17 +5,14 @@ import os
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["PYGLET_HEADLESS"] = "1"
 
-from rvs.configs.pipeline_configs import pipeline_configs
+import tyro
+from nerfstudio.configs.config_utils import convert_markup_to_ansi
+
+from rvs.configs.evaluation_configs import AnnotatedBaseConfigUnion
 from rvs.evaluation.evaluation import Evaluation, EvaluationConfig
 
 
-def main():
-    config = EvaluationConfig(
-        pipeline=pipeline_configs["default"],
-        lvis_categories={"amplifier"},
-        lvis_uids={"31a843bd24d740158a57a59200ba0ac8"},
-    )
-
+def main(config: EvaluationConfig):
     eval: Evaluation = config.setup()
 
     eval.init()
@@ -24,7 +21,13 @@ def main():
 
 
 def entrypoint():
-    main()
+    tyro.extras.set_accent_color("bright_yellow")
+    main(
+        tyro.cli(
+            AnnotatedBaseConfigUnion,
+            description=convert_markup_to_ansi(__doc__),
+        )
+    )
 
 
 if __name__ == "__main__":

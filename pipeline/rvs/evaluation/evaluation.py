@@ -10,6 +10,7 @@ from objaverse import load_lvis_annotations, load_objects
 
 from rvs.pipeline.pipeline import Pipeline, PipelineConfig
 from rvs.scripts.rvs import _set_random_seed
+from rvs.utils.console import file_link
 
 
 @dataclass
@@ -27,6 +28,12 @@ class EvaluationConfig(InstantiateConfig):
 
     lvis_download_processes = 8
     """Number of processes to use for downloading the 3D model files"""
+
+    output_dir: Path = Path("outputs")
+    """Relative or absolute output directory to save all output data"""
+
+    timestamp: str = "{timestamp}"
+    """Evaluation/experiment timestamp."""
 
 
 class Evaluation:
@@ -75,12 +82,13 @@ class Evaluation:
 
             for uid in self.lvis_dataset[category]:
                 file = Path(self.lvis_files[uid])
-                CONSOLE.log(f"Processing uid={uid}, file={str(file)}...")
+                CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
                 self.__process_file(file)
 
     def __process_file(self, file: Path) -> None:
         pipeline = self.__load_pipeline(self.config.pipeline, file)
-        pipeline.run()
+
+        results = pipeline.run()
 
         # Clear memory for next run
         del pipeline
@@ -91,23 +99,24 @@ class Evaluation:
         # Clone config
         config = replace(config)
 
+        config = self.__configure_pipeline(config, file)
+
         config.set_timestamp()
 
-        # config.print_to_terminal()
-
         _set_random_seed(config.machine.seed)
-
-        config = self.__configure_pipeline(config, file)
 
         pipeline: Pipeline = config.setup(local_rank=0, world_size=1)
 
         pipeline.init()
 
+        config.print_to_terminal()
         config.save_config()
 
         return pipeline
 
     def __configure_pipeline(self, config: PipelineConfig, file: Path) -> PipelineConfig:
+        config.output_dir = Path.joinpath(self.config.output_dir, file.name)
+        config.experiment_name = "evaluation"
         config.model_file = file
-        config.timestamp = "test"  # FIXME: Remove this
+        config.timestamp = self.config.timestamp
         return config

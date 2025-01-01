@@ -25,14 +25,13 @@ def _set_random_seed(seed) -> None:
 def main(config: PipelineConfig):
     config.set_timestamp()
 
-    config.print_to_terminal()
-
     _set_random_seed(config.machine.seed)
 
     pipeline: Pipeline = config.setup(local_rank=0, world_size=1)
 
     pipeline.init()
 
+    config.print_to_terminal()
     config.save_config()
 
     pipeline.run()

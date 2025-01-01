@@ -1,10 +1,11 @@
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Type
+from typing import Any, List, Optional, Type
 
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.utils.rich_utils import CONSOLE
+from numpy.typing import NDArray
 from PIL import Image as im
 
 from rvs.pipeline.clustering import Clustering, ClusteringConfig
@@ -13,8 +14,9 @@ from rvs.pipeline.renderer import Renderer, RendererConfig
 from rvs.pipeline.sampler import PositionSampler, PositionSamplerConfig
 from rvs.pipeline.selection import ViewSelection, ViewSelectionConfig
 from rvs.pipeline.views import View, Views, ViewsConfig
+from rvs.utils.console import file_link
 from rvs.utils.debug import render_sample_clusters, render_sample_positions
-from rvs.utils.nerfstudio import save_transforms_frame, save_transforms_json
+from rvs.utils.nerfstudio import get_frame_name, save_transforms_frame, save_transforms_json
 
 
 @dataclass
@@ -48,6 +50,18 @@ class PipelineConfig(ExperimentConfig):
     skip_rendering: bool = False
     """Whether to skip rendering views"""
 
+    render_sample_positions_of_views: Optional[List[int]] = None
+    """Views to render the sample positions of"""
+
+    render_sample_clusters_of_views: Optional[List[int]] = None
+    """Views to render the sample clusters of"""
+
+    render_sample_clusters_hard_assignment: bool = True
+    """Whether cluster assignments should be rendered as hard assignments"""
+
+    render_selected_views: bool = False
+    """Whether to render selected views"""
+
     def setup(self, **kwargs) -> Any:
         self.propagate_experiment_settings()
         return super().setup(**kwargs)
@@ -58,6 +72,15 @@ class PipelineConfig(ExperimentConfig):
         self.field.trainer.timestamp = self.timestamp
         self.field.trainer.machine.seed = self.machine.seed
         # TODO: There are some others like method_name, project_name and possibly more that should be propagated
+
+    def set_experiment_name(self) -> None:
+        if self.experiment_name is None:
+            datapath = self.model_file if self.model_file is not None else self.pipeline.datamanager.data
+            if datapath is not None:
+                datapath = datapath.parent if datapath.is_file() else datapath
+                self.experiment_name = str(datapath.stem)
+            else:
+                self.experiment_name = "unnamed"
 
     def print_to_terminal(self) -> None:
         CONSOLE.rule("Config")
@@ -82,7 +105,7 @@ class Pipeline:
         self.kwargs = kwargs
 
     def init(self) -> None:
-        output_dir = self.config.get_base_dir()  # FIXME: This has "unnamed" as experiment name...
+        output_dir = self.config.get_base_dir()
 
         self.__renderer_output_dir = output_dir / "renderer"
         self.__renderer_output_dir.mkdir(parents=True, exist_ok=True)
@@ -102,7 +125,7 @@ class Pipeline:
 
         self.selection = self.config.selection.setup()
 
-    def run(self) -> None:
+    def run(self) -> "Pipeline.State":
         pipeline_state = Pipeline.State(self)
 
         CONSOLE.log("Generating views...")
@@ -114,66 +137,80 @@ class Pipeline:
             self.renderer.render(self.config.model_file, pipeline_state.training_views, self.__save_view)
 
         CONSOLE.log("Sampling positions...")
-        sample_positions = self.sampler.sample(self.config.model_file)
+        pipeline_state.sample_positions = self.sampler.sample(self.config.model_file)
 
-        # TODO: Debug
-        render_sample_positions(
-            self.config.model_file,
-            pipeline_state.training_views[12],
-            sample_positions,
-            lambda sample_view, image: save_transforms_frame(
-                self.__renderer_output_dir, sample_view, image, frame_name="sample_positions.png"
-            ),
-        )
+        if self.config.render_sample_positions_of_views is not None:
+            for i in self.config.render_sample_positions_of_views:
+                render_sample_positions(
+                    self.config.model_file,
+                    pipeline_state.training_views[i],
+                    pipeline_state.sample_positions,
+                    lambda sample_view, image: save_transforms_frame(
+                        self.__renderer_output_dir,
+                        sample_view,
+                        image,
+                        frame_name=get_frame_name(
+                            pipeline_state.training_views[i], frame_name="sample_positions_{}.png"
+                        ),
+                    ),
+                )
 
         CONSOLE.log("Training radiance field...")
         self.field.init(pipeline_state, transforms_path, self.__field_output_dir, **self.kwargs)
         self.field.train()
 
         CONSOLE.log("Sampling embeddings...")
-        sample_embeddings = self.field.sample(sample_positions)
+        pipeline_state.sample_embeddings = self.field.sample(pipeline_state.sample_positions)
 
         CONSOLE.log("Clustering embeddings...")
-        sample_clusters = self.clustering.cluster(sample_embeddings)
+        pipeline_state.sample_clusters = self.clustering.cluster(pipeline_state.sample_embeddings)
 
-        # TODO: Debug
-        render_sample_clusters(
-            self.config.model_file,
-            pipeline_state.training_views[12],
-            sample_positions,
-            sample_embeddings,
-            sample_clusters,
-            lambda sample_view, image: save_transforms_frame(
-                self.__renderer_output_dir, sample_view, image, frame_name="sample_clusters.png"
-            ),
-            hard_assignments=True,
-        )
+        if self.config.render_sample_clusters_of_views is not None:
+            for i in self.config.render_sample_clusters_of_views:
+                render_sample_clusters(
+                    self.config.model_file,
+                    pipeline_state.training_views[i],
+                    pipeline_state.sample_positions,
+                    pipeline_state.sample_embeddings,
+                    pipeline_state.sample_clusters,
+                    lambda sample_view, image: save_transforms_frame(
+                        self.__renderer_output_dir,
+                        sample_view,
+                        image,
+                        frame_name=get_frame_name(
+                            pipeline_state.training_views[i], frame_name="sample_clusters_{}.png"
+                        ),
+                    ),
+                    hard_assignments=self.config.render_sample_clusters_hard_assignment,
+                )
 
         CONSOLE.log("Selecting views...")
-        selected_views = self.selection.select(sample_clusters, pipeline_state)
+        pipeline_state.selected_views = self.selection.select(pipeline_state.sample_clusters, pipeline_state)
 
         CONSOLE.log("Selected views:")
-        for i, view in enumerate(selected_views):
-            CONSOLE.log(view.index + 1)
+        for i, view in enumerate(pipeline_state.selected_views):
+            CONSOLE.log(f"{view.index + 1} ({file_link(view.path) if view.path is not None else 'N/A'})")
 
-        # TODO: Debug
-        for i, view in enumerate(selected_views):
-            render_sample_clusters(
-                self.config.model_file,
-                view,
-                sample_positions,
-                sample_embeddings,
-                sample_clusters,
-                lambda sample_view, image: save_transforms_frame(
-                    self.__renderer_output_dir,
-                    sample_view,
-                    image,
-                    frame_name=f"selected_{str(i + 1).zfill(5)}.png",
-                ),
-                hard_assignments=True,
-            )
+        if self.config.render_selected_views:
+            for i, view in enumerate(pipeline_state.selected_views):
+                render_sample_clusters(
+                    self.config.model_file,
+                    view,
+                    pipeline_state.sample_positions,
+                    pipeline_state.sample_embeddings,
+                    pipeline_state.sample_clusters,
+                    lambda sample_view, image: save_transforms_frame(
+                        self.__renderer_output_dir,
+                        sample_view,
+                        image,
+                        frame_name=get_frame_name(None, frame_index=i, frame_name="selected_{}.png"),
+                    ),
+                    hard_assignments=self.config.render_sample_clusters_hard_assignment,
+                )
 
         CONSOLE.log("Done...")
+
+        return pipeline_state
 
     def __save_transforms(self, views: List[View]) -> Path:
         path = save_transforms_json(
@@ -184,18 +221,21 @@ class Pipeline:
             self.config.renderer.width,
             self.config.renderer.height,
         )
-        CONSOLE.log(f"Saved views transforms to {str(path)}")
+        CONSOLE.log(f"Saved views transforms to {file_link(path)}")
         return path
 
     def __save_view(self, view: View, image: im.Image) -> Path:
-        path = save_transforms_frame(self.__renderer_output_dir, view, image)
-        CONSOLE.log(f"Saved view {view.index} to {str(path)}")
+        path = save_transforms_frame(self.__renderer_output_dir, view, image, set_path=True)
+        CONSOLE.log(f"Saved view {view.index} to {file_link(path)}")
         return path
 
     class State:
         pipeline: "Pipeline"
-
         training_views: List[View]
+        sample_positions: NDArray
+        sample_embeddings: NDArray
+        sample_clusters: NDArray
+        selected_views: List[View]
 
         def __init__(self, pipeline: "Pipeline") -> None:
             self.pipeline = pipeline
