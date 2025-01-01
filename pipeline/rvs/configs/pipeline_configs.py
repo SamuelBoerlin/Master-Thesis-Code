@@ -10,6 +10,7 @@ from lerf.lerf_config import lerf_method, lerf_method_big, lerf_method_lite
 
 from nerfstudio.engine.trainer import TrainerConfig
 from rvs.lerf.lerf_datamanager import CustomLERFDataManagerConfig
+from rvs.lerf.lerf_model import CustomLERFModelConfig
 from rvs.pipeline.clustering import KMeansClusteringConfig
 from rvs.pipeline.pipeline import FieldConfig, PipelineConfig
 from rvs.pipeline.renderer import TrimeshRendererConfig
@@ -41,8 +42,18 @@ def replace_lerf_datamanager(config: TrainerConfig) -> TrainerConfig:
     return config
 
 
+def replace_lerf_model(config: TrainerConfig) -> TrainerConfig:
+    pipeline = replace(
+        config.pipeline,
+        model=extend_dataclass_obj(config.pipeline.model, CustomLERFModelConfig),
+    )
+    config = replace(config, pipeline=pipeline)
+    return config
+
+
 def adapt_lerf_config(config: TrainerConfig) -> TrainerConfig:
     config = replace_lerf_datamanager(config)
+    config = replace_lerf_model(config)
     config = set_default_trainer_params(config)
     return config
 

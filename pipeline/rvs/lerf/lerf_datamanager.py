@@ -9,8 +9,6 @@ from lerf.data.utils.dino_dataloader import DinoDataloader
 from lerf.data.utils.pyramid_embedding_dataloader import PyramidEmbeddingDataloader
 from lerf.encoders.image_encoder import BaseImageEncoder
 
-from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
-
 
 @dataclass
 class CustomLERFDataManagerConfig(LERFDataManagerConfig):
