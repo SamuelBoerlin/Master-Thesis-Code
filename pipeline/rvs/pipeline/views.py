@@ -21,6 +21,7 @@ class View:
     def __init__(self, index: int, transform: NDArray) -> None:
         self.index = index
         self.transform = transform
+        self.path = None
 
 
 class Views:

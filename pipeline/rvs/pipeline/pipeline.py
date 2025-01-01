@@ -136,6 +136,9 @@ class Pipeline:
             CONSOLE.log("Rendering views...")
             self.renderer.render(self.config.model_file, pipeline_state.training_views, self.__save_view)
 
+        for view in pipeline_state.training_views:
+            self.__set_view_path(view)
+
         CONSOLE.log("Sampling positions...")
         pipeline_state.sample_positions = self.sampler.sample(self.config.model_file)
 
@@ -228,6 +231,13 @@ class Pipeline:
         path = save_transforms_frame(self.__renderer_output_dir, view, image, set_path=True)
         CONSOLE.log(f"Saved view {view.index} to {file_link(path)}")
         return path
+
+    def __set_view_path(self, view: View) -> None:
+        """Sets the view's path if path is not yet set and if a corresponding image file already exists"""
+        if view.path is None:
+            path = self.__renderer_output_dir / "images" / get_frame_name(view)
+            if path.exists():
+                view.path = path
 
     class State:
         pipeline: "Pipeline"

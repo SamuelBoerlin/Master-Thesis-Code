@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from PIL import Image as im
 
@@ -30,7 +30,7 @@ def save_transforms_frame(
     return frame_path
 
 
-def create_transforms_json(
+def create_transforms_dict(
     views: List[View],
     focal_length_x: float,
     focal_length_y: float,
@@ -38,8 +38,8 @@ def create_transforms_json(
     height: int,
     frame_dir: Path = Path("images/"),
     frame_name: Optional[str] = None,
-) -> str:
-    transforms_json = {
+) -> Dict[str, Any]:
+    transforms_dict = {
         "camera_model": "OPENCV",
         "fl_x": focal_length_x,
         "fl_y": focal_length_y,
@@ -62,8 +62,23 @@ def create_transforms_json(
             "file_path": str(frame_dir / get_frame_name(view, frame_name)),
             "transform_matrix": view.transform.tolist(),
         }
-        transforms_json["frames"].append(frame_json)
+        transforms_dict["frames"].append(frame_json)
 
+    return transforms_dict
+
+
+def create_transforms_json(
+    views: List[View],
+    focal_length_x: float,
+    focal_length_y: float,
+    width: int,
+    height: int,
+    frame_dir: Path = Path("images/"),
+    frame_name: Optional[str] = None,
+) -> str:
+    transforms_json = create_transforms_dict(
+        views, focal_length_x, focal_length_y, width, height, frame_dir=frame_dir, frame_name=frame_name
+    )
     return json.dumps(transforms_json, indent=4)
 
 

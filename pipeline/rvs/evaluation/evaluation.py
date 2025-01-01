@@ -1,4 +1,5 @@
 import gc
+import shutil
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Type
@@ -11,6 +12,7 @@ from objaverse import load_lvis_annotations, load_objects
 from rvs.pipeline.pipeline import Pipeline, PipelineConfig
 from rvs.scripts.rvs import _set_random_seed
 from rvs.utils.console import file_link
+from rvs.utils.nerfstudio import create_transforms_json, get_frame_name
 
 
 @dataclass
@@ -83,23 +85,57 @@ class Evaluation:
             for uid in self.lvis_dataset[category]:
                 file = Path(self.lvis_files[uid])
                 CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
-                self.__process_file(file)
+                self.process_pipeline(file)
 
-    def __process_file(self, file: Path) -> None:
+    def process_pipeline(self, file: Path) -> None:
         pipeline = self.__load_pipeline(self.config.pipeline, file)
 
+        results_dir = Path.joinpath(self.config.output_dir, "intermediate", "results")
+        results_dir.mkdir(parents=True, exist_ok=True)
+
         results = pipeline.run()
+
+        self.save_pipeline_results(results, results_dir, file)
 
         # Clear memory for next run
         del pipeline
         gc.collect()
         torch.cuda.empty_cache()
 
+    def save_pipeline_results(self, results: Pipeline.State, output_dir: Path, file: Path) -> None:
+        output_dir = Path.joinpath(output_dir, file.name)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        for view in results.selected_views:
+            if view.path is None:
+                raise ValueError(f"View {view.index + 1} is missing path (hasn't been saved to a file?)")
+
+            frame_name = get_frame_name(view)
+
+            shutil.copyfile(view.path, output_dir / frame_name)
+
+            transforms_json_path = output_dir / (frame_name + ".transforms.json")
+            transforms_json = create_transforms_json(
+                [view],
+                focal_length_x=results.pipeline.renderer.config.focal_length_x,
+                focal_length_y=results.pipeline.renderer.config.focal_length_y,
+                width=results.pipeline.renderer.config.width,
+                height=results.pipeline.renderer.config.height,
+                frame_dir=Path("."),
+                frame_name=frame_name,
+            )
+
+            with transforms_json_path.open("w") as f:
+                f.write(transforms_json)
+
     def __load_pipeline(self, config: PipelineConfig, file: Path) -> Pipeline:
         # Clone config
         config = replace(config)
 
-        config = self.__configure_pipeline(config, file)
+        results_dir = Path.joinpath(self.config.output_dir, "intermediate", "pipeline")
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        config = self.__configure_pipeline(config, results_dir, file)
 
         config.set_timestamp()
 
@@ -114,8 +150,8 @@ class Evaluation:
 
         return pipeline
 
-    def __configure_pipeline(self, config: PipelineConfig, file: Path) -> PipelineConfig:
-        config.output_dir = Path.joinpath(self.config.output_dir, file.name)
+    def __configure_pipeline(self, config: PipelineConfig, output_dir: Path, file: Path) -> PipelineConfig:
+        config.output_dir = Path.joinpath(output_dir, file.name)
         config.experiment_name = "evaluation"
         config.model_file = file
         config.timestamp = self.config.timestamp
