@@ -2,10 +2,9 @@ from dataclasses import dataclass, field
 from typing import Type
 
 import numpy as np
+from nerfstudio.configs.base_config import InstantiateConfig
 from scipy.cluster.vq import kmeans, whiten
 from trimesh.typed import NDArray
-
-from nerfstudio.configs.base_config import InstantiateConfig
 
 
 @dataclass

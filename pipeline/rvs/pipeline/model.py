@@ -1,10 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Any, Type
 
-from torch import nn
-
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.models.base_model import Model, ModelConfig
+from torch import nn
 
 
 @dataclass

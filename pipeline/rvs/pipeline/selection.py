@@ -7,12 +7,12 @@ import numpy as np
 import torch
 from lerf.lerf import LERFModel
 from lerf.lerf_pipeline import LERFPipeline
+from nerfstudio.configs.base_config import InstantiateConfig
+from nerfstudio.data.datamanagers.base_datamanager import DataManager
 from numpy.typing import NDArray
 from torch import Tensor
 
 import rvs.pipeline.pipeline
-from nerfstudio.configs.base_config import InstantiateConfig
-from nerfstudio.data.datamanagers.base_datamanager import DataManager
 from rvs.pipeline.renderer import View
 
 

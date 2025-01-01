@@ -2,9 +2,8 @@ from dataclasses import dataclass, field
 from typing import List, Type
 
 import numpy as np
-from numpy.typing import NDArray
-
 from nerfstudio.configs.base_config import InstantiateConfig
+from numpy.typing import NDArray
 
 
 @dataclass

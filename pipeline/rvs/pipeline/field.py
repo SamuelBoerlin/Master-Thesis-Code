@@ -6,13 +6,13 @@ from typing import Optional, Type
 
 import torch
 from lerf.lerf import LERFModel
+from nerfstudio.configs.base_config import InstantiateConfig
+from nerfstudio.engine.trainer import Trainer, TrainerConfig
+from nerfstudio.models.base_model import ModelConfig
 from numpy.typing import NDArray
 from torch import Tensor
 
 import rvs.pipeline.pipeline
-from nerfstudio.configs.base_config import InstantiateConfig
-from nerfstudio.engine.trainer import Trainer, TrainerConfig
-from nerfstudio.models.base_model import ModelConfig
 from rvs.pipeline.model import WrapperModelConfig
 from rvs.pipeline.training_controller import TrainingController, TrainingControllerConfig
 

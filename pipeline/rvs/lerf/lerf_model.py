@@ -3,10 +3,10 @@ from typing import Any, Dict, Optional, Type
 
 import torch
 from lerf.lerf import LERFModel, LERFModelConfig
-
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.data.scene_box import OrientedBox
+
 from rvs.pipeline.training_controller import RuntimeModelParameters
 
 

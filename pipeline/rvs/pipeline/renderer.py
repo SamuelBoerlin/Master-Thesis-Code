@@ -6,6 +6,7 @@ from typing import Callable, List, Optional, Type
 import numpy as np
 import pyrender
 import trimesh
+from nerfstudio.configs.base_config import InstantiateConfig
 from numpy.typing import NDArray
 from PIL import Image as im
 from pyrender.constants import RenderFlags
@@ -13,7 +14,6 @@ from scipy.spatial.transform import Rotation as R
 from trimesh import Scene
 from trimesh.scene import Camera
 
-from nerfstudio.configs.base_config import InstantiateConfig
 from rvs.pipeline.views import View
 from rvs.utils.trimesh import normalize_scene
 

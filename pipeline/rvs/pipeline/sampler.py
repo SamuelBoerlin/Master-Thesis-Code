@@ -4,11 +4,11 @@ from typing import Type
 
 import numpy as np
 import trimesh
+from nerfstudio.configs.base_config import InstantiateConfig
 from trimesh import triangles
 from trimesh.scene import Scene
 from trimesh.typed import Integer, NDArray, Number, Optional
 
-from nerfstudio.configs.base_config import InstantiateConfig
 from rvs.utils.trimesh import normalize_scene
 
 

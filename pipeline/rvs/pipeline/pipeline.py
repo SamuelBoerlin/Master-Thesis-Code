@@ -1,13 +1,12 @@
 import dataclasses
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Type
 
-from PIL import Image as im
-
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.utils.rich_utils import CONSOLE
+from PIL import Image as im
+
 from rvs.pipeline.clustering import Clustering, ClusteringConfig
 from rvs.pipeline.field import Field, FieldConfig
 from rvs.pipeline.renderer import Renderer, RendererConfig

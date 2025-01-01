@@ -6,6 +6,7 @@ from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
 from nerfstudio.models.base_model import Model
 from nerfstudio.utils.rich_utils import CONSOLE
+
 from rvs.pipeline.model import WrapperHooks, WrapperHooksConfig
 
 

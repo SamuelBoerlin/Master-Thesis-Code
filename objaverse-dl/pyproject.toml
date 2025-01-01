@@ -1,24 +1,11 @@
 [project]
-name = "rvs-pipeline"
+name = "objaverse"
 version = "0.0.1"
 
-dependencies=[
-    "lerf>=0.1.1",
-    "nerfstudio>=0.3.1",
-    "pyrender>=0.1.45",
-    "pyglet<2",
-    "objaverse @ file:///home/ubuntu/repo/objaverse-dl"
-]
+dependencies=[]
 
 [tool.setuptools.packages.find]
-include = ["rvs*"]
-
-[project.scripts]
-rvs = "rvs.scripts.rvs:entrypoint"
-ervs = "rvs.scripts.ervs:entrypoint"
-
-#[project.entry-points.'rvs.pipelines']
-#default = 'rvs.rvs_configs:default_pipeline'
+include = ["objaverse"]
 
 [tool.ruff]
 line-length = 120
@@ -53,5 +40,5 @@ lint.ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
-known-first-party = ["rvs"]
+known-first-party = ["objaverse"]
 split-on-trailing-comma = false
