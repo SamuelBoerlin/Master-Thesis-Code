@@ -37,6 +37,12 @@ class EvaluationConfig(InstantiateConfig):
     timestamp: str = "{timestamp}"
     """Evaluation/experiment timestamp."""
 
+    stage_by_stage: bool = False
+    """Whether to process the objects stage-by-stage (i.e. first SAMPLE_VIEWS for all objects, then RENDER_VIEWS, etc.) instead of all stages object-by-object"""
+
+    up_to_stage: Optional[Pipeline.Stage] = None
+    """If configured the pipeline is only run up to this stage and no further"""
+
 
 class Evaluation:
     config: EvaluationConfig
@@ -79,16 +85,38 @@ class Evaluation:
         return dataset
 
     def run(self) -> None:
+        if self.config.stage_by_stage:
+            self.__run_stage_by_stage()
+        else:
+            self.__run_object_by_object()
+
+    def __run_stage_by_stage(self) -> None:
+        stages = self.config.up_to_stage.up_to() if self.config.up_to_stage is not None else None
+
+        for stage in stages:
+            CONSOLE.log(f"Processing stage {str(stage)}...")
+
+            for category in self.lvis_dataset.keys():
+                CONSOLE.log(f"Processing category {category}...")
+
+                for uid in self.lvis_dataset[category]:
+                    file = Path(self.lvis_files[uid])
+                    CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
+                    self.process_pipeline(file, [stage])
+
+    def __run_object_by_object(self) -> None:
+        stages = self.config.up_to_stage.up_to() if self.config.up_to_stage is not None else None
+
         for category in self.lvis_dataset.keys():
             CONSOLE.log(f"Processing category {category}...")
 
             for uid in self.lvis_dataset[category]:
                 file = Path(self.lvis_files[uid])
                 CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
-                self.process_pipeline(file)
+                self.process_pipeline(file, stages)
 
-    def process_pipeline(self, file: Path) -> None:
-        pipeline = self.__load_pipeline(self.config.pipeline, file)
+    def process_pipeline(self, file: Path, stages: Optional[List[Pipeline.Stage]] = None) -> None:
+        pipeline = self.__load_pipeline(self.config.pipeline, file, stages)
 
         results_dir = Path.joinpath(self.config.output_dir, "intermediate", "results")
         results_dir.mkdir(parents=True, exist_ok=True)
@@ -106,36 +134,37 @@ class Evaluation:
         output_dir = Path.joinpath(output_dir, file.name)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        for view in results.selected_views:
-            if view.path is None:
-                raise ValueError(f"View {view.index + 1} is missing path (hasn't been saved to a file?)")
+        if results.selected_views is not None:
+            for view in results.selected_views:
+                if view.path is None:
+                    raise ValueError(f"View {view.index + 1} is missing path (hasn't been saved to a file?)")
 
-            frame_name = get_frame_name(view)
+                frame_name = get_frame_name(view)
 
-            shutil.copyfile(view.path, output_dir / frame_name)
+                shutil.copyfile(view.path, output_dir / frame_name)
 
-            transforms_json_path = output_dir / (frame_name + ".transforms.json")
-            transforms_json = create_transforms_json(
-                [view],
-                focal_length_x=results.pipeline.renderer.config.focal_length_x,
-                focal_length_y=results.pipeline.renderer.config.focal_length_y,
-                width=results.pipeline.renderer.config.width,
-                height=results.pipeline.renderer.config.height,
-                frame_dir=Path("."),
-                frame_name=frame_name,
-            )
+                transforms_json_path = output_dir / (frame_name + ".transforms.json")
+                transforms_json = create_transforms_json(
+                    [view],
+                    focal_length_x=results.pipeline.renderer.config.focal_length_x,
+                    focal_length_y=results.pipeline.renderer.config.focal_length_y,
+                    width=results.pipeline.renderer.config.width,
+                    height=results.pipeline.renderer.config.height,
+                    frame_dir=Path("."),
+                    frame_name=frame_name,
+                )
 
-            with transforms_json_path.open("w") as f:
-                f.write(transforms_json)
+                with transforms_json_path.open("w") as f:
+                    f.write(transforms_json)
 
-    def __load_pipeline(self, config: PipelineConfig, file: Path) -> Pipeline:
+    def __load_pipeline(self, config: PipelineConfig, file: Path, stages: Optional[List[Pipeline.Stage]]) -> Pipeline:
         # Clone config
         config = replace(config)
 
         results_dir = Path.joinpath(self.config.output_dir, "intermediate", "pipeline")
         results_dir.mkdir(parents=True, exist_ok=True)
 
-        config = self.__configure_pipeline(config, results_dir, file)
+        config = self.__configure_pipeline(config, results_dir, file, stages)
 
         config.set_timestamp()
 
@@ -150,9 +179,12 @@ class Evaluation:
 
         return pipeline
 
-    def __configure_pipeline(self, config: PipelineConfig, output_dir: Path, file: Path) -> PipelineConfig:
+    def __configure_pipeline(
+        self, config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[Pipeline.Stage]]
+    ) -> PipelineConfig:
         config.output_dir = Path.joinpath(output_dir, file.name)
         config.experiment_name = "evaluation"
         config.model_file = file
         config.timestamp = self.config.timestamp
+        config.stages = stages
         return config

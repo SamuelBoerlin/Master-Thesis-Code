@@ -1,7 +1,8 @@
 import dataclasses
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Any, List, Optional, Type
+from typing import Any, List, Optional, Set, Type
 
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.utils.rich_utils import CONSOLE
@@ -42,14 +43,14 @@ class PipelineConfig(ExperimentConfig):
     """Configuration for final view selection algorithm."""
 
     model_file: Path = None
-    """Path to .glb 3D model file"""
+    """Path to .glb 3D model file."""
+
+    stages: Optional[Set["Pipeline.Stage"]] = None
+    """Which stages of the pipeline should be run. If empty all stages are run."""
 
     #################
     # Debug options #
     #################
-    skip_rendering: bool = False
-    """Whether to skip rendering views"""
-
     render_sample_positions_of_views: Optional[List[int]] = None
     """Views to render the sample positions of"""
 
@@ -128,92 +129,101 @@ class Pipeline:
     def run(self) -> "Pipeline.State":
         pipeline_state = Pipeline.State(self)
 
-        CONSOLE.log("Generating views...")
-        pipeline_state.training_views = self.views.generate()
-        transforms_path = self.__save_transforms(pipeline_state.training_views)
+        if self.should_run_stage(Pipeline.Stage.SAMPLE_VIEWS):
+            CONSOLE.log("Generating views...")
+            pipeline_state.training_views = self.views.generate()
+            transforms_path = self.__save_transforms(pipeline_state.training_views)
 
-        if not self.config.skip_rendering:
+        if self.should_run_stage(Pipeline.Stage.RENDER_VIEWS):
             CONSOLE.log("Rendering views...")
             self.renderer.render(self.config.model_file, pipeline_state.training_views, self.__save_view)
 
         for view in pipeline_state.training_views:
             self.__set_view_path(view)
 
-        CONSOLE.log("Sampling positions...")
-        pipeline_state.sample_positions = self.sampler.sample(self.config.model_file)
+        if self.should_run_stage(Pipeline.Stage.SAMPLE_POSITIONS):
+            CONSOLE.log("Sampling positions...")
+            pipeline_state.sample_positions = self.sampler.sample(self.config.model_file)
 
-        if self.config.render_sample_positions_of_views is not None:
-            for i in self.config.render_sample_positions_of_views:
-                render_sample_positions(
-                    self.config.model_file,
-                    pipeline_state.training_views[i],
-                    pipeline_state.sample_positions,
-                    lambda sample_view, image: save_transforms_frame(
-                        self.__renderer_output_dir,
-                        sample_view,
-                        image,
-                        frame_name=get_frame_name(
-                            pipeline_state.training_views[i], frame_name="sample_positions_{}.png"
+            if self.config.render_sample_positions_of_views is not None:
+                for i in self.config.render_sample_positions_of_views:
+                    render_sample_positions(
+                        self.config.model_file,
+                        pipeline_state.training_views[i],
+                        pipeline_state.sample_positions,
+                        lambda sample_view, image: save_transforms_frame(
+                            self.__renderer_output_dir,
+                            sample_view,
+                            image,
+                            frame_name=get_frame_name(
+                                pipeline_state.training_views[i], frame_name="sample_positions_{}.png"
+                            ),
                         ),
-                    ),
-                )
+                    )
 
-        CONSOLE.log("Training radiance field...")
-        self.field.init(pipeline_state, transforms_path, self.__field_output_dir, **self.kwargs)
-        self.field.train()
+        if self.should_run_stage(Pipeline.Stage.TRAIN_FIELD):
+            CONSOLE.log("Training radiance field...")
+            self.field.init(pipeline_state, transforms_path, self.__field_output_dir, **self.kwargs)
+            self.field.train()
 
-        CONSOLE.log("Sampling embeddings...")
-        pipeline_state.sample_embeddings = self.field.sample(pipeline_state.sample_positions)
+        if self.should_run_stage(Pipeline.Stage.SAMPLE_EMBEDDINGS):
+            CONSOLE.log("Sampling embeddings...")
+            pipeline_state.sample_embeddings = self.field.sample(pipeline_state.sample_positions)
 
-        CONSOLE.log("Clustering embeddings...")
-        pipeline_state.sample_clusters = self.clustering.cluster(pipeline_state.sample_embeddings)
+        if self.should_run_stage(Pipeline.Stage.CLUSTER_EMBEDDINGS):
+            CONSOLE.log("Clustering embeddings...")
+            pipeline_state.sample_clusters = self.clustering.cluster(pipeline_state.sample_embeddings)
 
-        if self.config.render_sample_clusters_of_views is not None:
-            for i in self.config.render_sample_clusters_of_views:
-                render_sample_clusters(
-                    self.config.model_file,
-                    pipeline_state.training_views[i],
-                    pipeline_state.sample_positions,
-                    pipeline_state.sample_embeddings,
-                    pipeline_state.sample_clusters,
-                    lambda sample_view, image: save_transforms_frame(
-                        self.__renderer_output_dir,
-                        sample_view,
-                        image,
-                        frame_name=get_frame_name(
-                            pipeline_state.training_views[i], frame_name="sample_clusters_{}.png"
+            if self.config.render_sample_clusters_of_views is not None:
+                for i in self.config.render_sample_clusters_of_views:
+                    render_sample_clusters(
+                        self.config.model_file,
+                        pipeline_state.training_views[i],
+                        pipeline_state.sample_positions,
+                        pipeline_state.sample_embeddings,
+                        pipeline_state.sample_clusters,
+                        lambda sample_view, image: save_transforms_frame(
+                            self.__renderer_output_dir,
+                            sample_view,
+                            image,
+                            frame_name=get_frame_name(
+                                pipeline_state.training_views[i], frame_name="sample_clusters_{}.png"
+                            ),
                         ),
-                    ),
-                    hard_assignments=self.config.render_sample_clusters_hard_assignment,
-                )
+                        hard_assignments=self.config.render_sample_clusters_hard_assignment,
+                    )
 
-        CONSOLE.log("Selecting views...")
-        pipeline_state.selected_views = self.selection.select(pipeline_state.sample_clusters, pipeline_state)
+        if self.should_run_stage(Pipeline.Stage.SELECT_VIEWS):
+            CONSOLE.log("Selecting views...")
+            pipeline_state.selected_views = self.selection.select(pipeline_state.sample_clusters, pipeline_state)
 
-        CONSOLE.log("Selected views:")
-        for i, view in enumerate(pipeline_state.selected_views):
-            CONSOLE.log(f"{view.index + 1} ({file_link(view.path) if view.path is not None else 'N/A'})")
+            if self.config.render_selected_views:
+                for i, view in enumerate(pipeline_state.selected_views):
+                    render_sample_clusters(
+                        self.config.model_file,
+                        view,
+                        pipeline_state.sample_positions,
+                        pipeline_state.sample_embeddings,
+                        pipeline_state.sample_clusters,
+                        lambda sample_view, image: save_transforms_frame(
+                            self.__renderer_output_dir,
+                            sample_view,
+                            image,
+                            frame_name=get_frame_name(None, frame_index=i, frame_name="selected_{}.png"),
+                        ),
+                        hard_assignments=self.config.render_sample_clusters_hard_assignment,
+                    )
 
-        if self.config.render_selected_views:
+            CONSOLE.log("Selected views:")
             for i, view in enumerate(pipeline_state.selected_views):
-                render_sample_clusters(
-                    self.config.model_file,
-                    view,
-                    pipeline_state.sample_positions,
-                    pipeline_state.sample_embeddings,
-                    pipeline_state.sample_clusters,
-                    lambda sample_view, image: save_transforms_frame(
-                        self.__renderer_output_dir,
-                        sample_view,
-                        image,
-                        frame_name=get_frame_name(None, frame_index=i, frame_name="selected_{}.png"),
-                    ),
-                    hard_assignments=self.config.render_sample_clusters_hard_assignment,
-                )
+                CONSOLE.log(f"{view.index + 1} ({file_link(view.path) if view.path is not None else 'N/A'})")
 
         CONSOLE.log("Done...")
 
         return pipeline_state
+
+    def should_run_stage(self, stage: "Pipeline.Stage") -> bool:
+        return self.config.stages is None or stage in self.config.stages
 
     def __save_transforms(self, views: List[View]) -> Path:
         path = save_transforms_json(
@@ -241,11 +251,23 @@ class Pipeline:
 
     class State:
         pipeline: "Pipeline"
-        training_views: List[View]
-        sample_positions: NDArray
-        sample_embeddings: NDArray
-        sample_clusters: NDArray
-        selected_views: List[View]
+        training_views: Optional[List[View]] = None
+        sample_positions: Optional[NDArray] = None
+        sample_embeddings: Optional[NDArray] = None
+        sample_clusters: Optional[NDArray] = None
+        selected_views: Optional[List[View]] = None
 
         def __init__(self, pipeline: "Pipeline") -> None:
             self.pipeline = pipeline
+
+    class Stage(Enum):
+        SAMPLE_VIEWS = 1
+        RENDER_VIEWS = 2
+        SAMPLE_POSITIONS = 3
+        TRAIN_FIELD = 4
+        SAMPLE_EMBEDDINGS = 5
+        CLUSTER_EMBEDDINGS = 6
+        SELECT_VIEWS = 7
+
+        def up_to(self) -> List["Pipeline.Stage"]:
+            return [stage for stage in Pipeline.Stage if stage.value <= self.value]
