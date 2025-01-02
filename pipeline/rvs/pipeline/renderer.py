@@ -9,8 +9,8 @@ import trimesh
 from nerfstudio.configs.base_config import InstantiateConfig
 from numpy.typing import NDArray
 from PIL import Image as im
+from pyglet import gl
 from pyrender.constants import RenderFlags
-from scipy.spatial.transform import Rotation as R
 from trimesh import Scene
 from trimesh.scene import Camera
 
@@ -128,8 +128,16 @@ class TrimeshRenderer(Renderer):
     def render_view(self, scene: Scene, camera: Camera, view: View) -> im.Image:
         scene.camera_transform = view.transform
 
+        # Need to set alpha_size=8 to enable alpha channel. This is not set by default and it seems
+        # in the headless environment it defaults to 0 which of course disables the alpha channel.
+        # Other defaults are taken from trimesh SceneViewer.__init__()
+        pyglet_conf = gl.Config(sample_buffers=1, samples=4, depth_size=24, double_buffer=True, alpha_size=8)
+
         png_bytes = scene.save_image(
-            resolution=[self.config.width, self.config.height], background=self.config.background
+            resolution=[self.config.width, self.config.height],
+            background=self.config.background,
+            visible=False,
+            window_conf=pyglet_conf,
         )
 
         with io.BytesIO(png_bytes) as buf:
@@ -139,9 +147,8 @@ class TrimeshRenderer(Renderer):
             return image
 
     def process_image(self, image: im.Image) -> None:
-        if self.config.background[3] == 0:
-            # FIXME: Hack: make background transparent
-            # Trimesh *should* natively have proper support for this, but it doesn't seem to work in my setup
+        if False and self.config.background[3] == 0:
+            # No longer necessary as alpha channel works now
             pixels = image.getdata()
             image.putdata(
                 [
