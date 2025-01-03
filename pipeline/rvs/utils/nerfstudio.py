@@ -1,8 +1,9 @@
 import json
 from concurrent.futures import Executor, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import numpy as np
 from PIL import Image as im
 
 from rvs.pipeline.views import View
@@ -102,6 +103,46 @@ def save_transforms_json(
     with path.open("w") as f:
         f.write(text)
     return path
+
+
+def load_transforms_json(
+    dir: Path,
+    transforms_name: Optional[str] = None,
+    set_view_path: bool = False,
+) -> Tuple[Path, List[View], float, float, int, int]:
+    if transforms_name is None:
+        transforms_name = "transforms.json"
+    path = dir / transforms_name
+
+    if not path.exists():
+        raise FileNotFoundError(f"Transforms file {str(path)} does not exist")
+
+    if not path.is_file():
+        raise FileNotFoundError(f"Transforms file path {str(path)} is not a file")
+
+    text: str = None
+    with path.open("r") as f:
+        text = f.read()
+
+    transforms_json = json.loads(text)
+
+    focal_length_x = float(transforms_json["fl_x"])
+    focal_length_y = float(transforms_json["fl_y"])
+
+    width = int(transforms_json["w"])
+    height = int(transforms_json["h"])
+
+    views: List[View] = []
+    frames_json = transforms_json["frames"]
+    for i, frame_json in enumerate(frames_json):
+        file_path = Path(frame_json["file_path"])
+        transform_matrix = np.array(frame_json["transform_matrix"])
+        view = View(i, transform_matrix)
+        if set_view_path:
+            view.path = file_path
+        views.append(view)
+
+    return (path, views, focal_length_x, focal_length_y, width, height)
 
 
 class ThreadedImageSaver:

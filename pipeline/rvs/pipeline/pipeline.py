@@ -1,9 +1,11 @@
 import dataclasses
+import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, List, Optional, Set, Type
 
+import numpy as np
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.typing import NDArray
@@ -17,7 +19,13 @@ from rvs.pipeline.selection import ViewSelection, ViewSelectionConfig
 from rvs.pipeline.views import View, Views, ViewsConfig
 from rvs.utils.console import file_link
 from rvs.utils.debug import render_sample_clusters, render_sample_positions
-from rvs.utils.nerfstudio import ThreadedImageSaver, get_frame_name, save_transforms_frame, save_transforms_json
+from rvs.utils.nerfstudio import (
+    ThreadedImageSaver,
+    get_frame_name,
+    load_transforms_json,
+    save_transforms_frame,
+    save_transforms_json,
+)
 
 
 @dataclass
@@ -99,6 +107,7 @@ class Pipeline:
     selection: ViewSelection
 
     __renderer_output_dir: Path
+    __sampler_output_dir: Path
     __field_output_dir: Path
 
     def __init__(self, config: PipelineConfig, **kwargs) -> None:
@@ -120,6 +129,9 @@ class Pipeline:
 
         self.field = self.config.field.setup()
 
+        self.__sampler_output_dir = output_dir / "sampler"
+        self.__sampler_output_dir.mkdir(parents=True, exist_ok=True)
+
         self.sampler = self.config.sampler.setup()
 
         self.clustering = self.config.clustering.setup()
@@ -130,14 +142,18 @@ class Pipeline:
         pipeline_state = Pipeline.State(self)
 
         if self.should_run_stage(Pipeline.Stage.SAMPLE_VIEWS):
-            CONSOLE.log("Generating views...")
+            CONSOLE.log("Generating view positions...")
             pipeline_state.training_views = self.views.generate()
-            transforms_path = self.__save_transforms(pipeline_state.training_views)
+            transforms_path = self.__save_transforms(pipeline_state)
+        elif self.should_load_stage(Pipeline.Stage.SAMPLE_VIEWS):
+            CONSOLE.log("Loading view positions...")
+            transforms_path = self.__load_transforms(pipeline_state)
 
         if self.should_run_stage(Pipeline.Stage.RENDER_VIEWS):
-            CONSOLE.log("Rendering views...")
+            CONSOLE.log("Rendering view images...")
             with ThreadedImageSaver(self.__renderer_output_dir, callback=self.__on_saved_view) as saver:
                 self.renderer.render(self.config.model_file, pipeline_state.training_views, saver.save)
+        # TODO Implement loading data?
 
         for view in pipeline_state.training_views:
             self.__set_view_path(view)
@@ -145,6 +161,7 @@ class Pipeline:
         if self.should_run_stage(Pipeline.Stage.SAMPLE_POSITIONS):
             CONSOLE.log("Sampling positions...")
             pipeline_state.sample_positions = self.sampler.sample(self.config.model_file)
+            self.__save_sample_positions(pipeline_state)
 
             if self.config.render_sample_positions_of_views is not None:
                 for i in self.config.render_sample_positions_of_views:
@@ -161,15 +178,24 @@ class Pipeline:
                             ),
                         ),
                     )
+        elif self.should_load_stage(Pipeline.Stage.SAMPLE_POSITIONS):
+            CONSOLE.log("Loading positions...")
+            self.__load_sample_positions(pipeline_state)
 
         if self.should_run_stage(Pipeline.Stage.TRAIN_FIELD):
             CONSOLE.log("Training radiance field...")
             self.field.init(pipeline_state, transforms_path, self.__field_output_dir, **self.kwargs)
             self.field.train()
+        elif self.should_load_stage(Pipeline.Stage.TRAIN_FIELD):
+            CONSOLE.log("Loading radiance field...")
+            self.field.init(
+                pipeline_state, transforms_path, self.__field_output_dir, load_from_checkpoint=True, **self.kwargs
+            )
 
         if self.should_run_stage(Pipeline.Stage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Sampling embeddings...")
             pipeline_state.sample_embeddings = self.field.sample(pipeline_state.sample_positions)
+        # TODO Implement loading data
 
         if self.should_run_stage(Pipeline.Stage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Clustering embeddings...")
@@ -193,6 +219,7 @@ class Pipeline:
                         ),
                         hard_assignments=self.config.render_sample_clusters_hard_assignment,
                     )
+        # TODO Implement loading data
 
         if self.should_run_stage(Pipeline.Stage.SELECT_VIEWS):
             CONSOLE.log("Selecting views...")
@@ -218,6 +245,7 @@ class Pipeline:
             CONSOLE.log("Selected views:")
             for i, view in enumerate(pipeline_state.selected_views):
                 CONSOLE.log(f"{view.index + 1} ({file_link(view.path) if view.path is not None else 'N/A'})")
+        # TODO Implement loading data
 
         CONSOLE.log("Done...")
 
@@ -226,10 +254,13 @@ class Pipeline:
     def should_run_stage(self, stage: "Pipeline.Stage") -> bool:
         return self.config.stages is None or stage in self.config.stages
 
-    def __save_transforms(self, views: List[View]) -> Path:
+    def should_load_stage(self, stage: "Pipeline.Stage") -> bool:
+        return self.config.stages is None or stage.required_by(self.config.stages)
+
+    def __save_transforms(self, state: "Pipeline.State") -> Path:
         path = save_transforms_json(
             self.__renderer_output_dir,
-            views,
+            state.training_views,
             self.config.renderer.focal_length_x,
             self.config.renderer.focal_length_y,
             self.config.renderer.width,
@@ -237,6 +268,17 @@ class Pipeline:
         )
         CONSOLE.log(f"Saved views transforms to {file_link(path)}")
         return path
+
+    def __load_transforms(self, state: "Pipeline.State") -> Path:
+        try:
+            path, views, fl_x, fl_y, w, h = load_transforms_json(self.__renderer_output_dir)
+            # TODO Check if fl_x etc. matches with renderer config
+            state.training_views = views
+            CONSOLE.log(f"Loaded views transforms from {file_link(path)}")
+            return path
+        except Exception as ex:
+            CONSOLE.log("Failed loading views transforms:")
+            raise ex
 
     def __on_saved_view(self, view: View, image: im.Image, path: Path) -> None:
         CONSOLE.log(f"Saved view {view.index} to {file_link(path)}")
@@ -248,6 +290,23 @@ class Pipeline:
             path = self.__renderer_output_dir / "images" / get_frame_name(view)
             if path.exists():
                 view.path = path
+
+    def __save_sample_positions(self, state: "Pipeline.State") -> Path:
+        path = self.__sampler_output_dir / "positions.json"
+        with path.open("w") as f:
+            json.dump(state.sample_positions.tolist(), f)
+        CONSOLE.log(f"Saved positions to {file_link(path)}")
+
+    def __load_sample_positions(self, state: "Pipeline.State") -> Path:
+        path = self.__sampler_output_dir / "positions.json"
+        try:
+            with path.open("r") as f:
+                state.sample_positions = np.array(json.load(f))
+            CONSOLE.log(f"Loaded positions from {file_link(path)}")
+            return path
+        except Exception as ex:
+            CONSOLE.log("Failed loading positions:")
+            raise ex
 
     class State:
         pipeline: "Pipeline"
@@ -268,6 +327,16 @@ class Pipeline:
         SAMPLE_EMBEDDINGS = 5
         CLUSTER_EMBEDDINGS = 6
         SELECT_VIEWS = 7
+        OUTPUT = 8
+
+        def depends_on(self, stage: "Pipeline.Stage") -> bool:
+            return self.value > stage.value
+
+        def required_by(self, stages: List["Pipeline.Stage"]) -> bool:
+            for stage in stages:
+                if stage.depends_on(self):
+                    return True
+            return False
 
         def before(self) -> List["Pipeline.Stage"]:
             return [stage for stage in Pipeline.Stage if stage.value <= self.value]

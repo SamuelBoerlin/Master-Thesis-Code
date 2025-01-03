@@ -42,25 +42,37 @@ class Field:
         pipeline_state: rvs.pipeline.pipeline.Pipeline.State,
         data_path: Optional[Path],
         output_dir: Optional[Path],
+        load_from_checkpoint: bool = False,
         **kwargs,
     ) -> None:
         config = self.config
+
         if data_path:
             config = self.__replace_data(config, data_path)
+
         if output_dir:
             cache_dir = Path.joinpath(output_dir, "cache", pipeline_state.pipeline.config.model_file.name)
             cache_dir.mkdir(parents=True, exist_ok=True)
             config = self.__replace_cache_dir(config, cache_dir)
+
             output_dir = Path.joinpath(output_dir, "nerf")
             output_dir.mkdir(parents=True, exist_ok=True)
             config = self.__replace_output_dir(config, output_dir)
+
+        if load_from_checkpoint:
+            config = self.__set_load_from_checkpoint(config)
+
         self.controller = config.controller.setup()
+
         config = self.__replace_model(
             config,
             WrapperModelConfig(wrapper_model=config.trainer.pipeline.model, wrapper_hooks=self.controller.hooks),
         )
+
         self.trainer = config.trainer.setup(**kwargs)
+
         self.trainer.config.save_config()
+
         self.trainer.setup()
 
     def __replace_data(self, config: FieldConfig, data: Path) -> FieldConfig:
@@ -72,6 +84,11 @@ class Field:
 
     def __replace_output_dir(self, config: FieldConfig, output_dir: Path) -> FieldConfig:
         trainer = replace(config.trainer, output_dir=output_dir)
+        config = replace(config, trainer=trainer)
+        return config
+
+    def __set_load_from_checkpoint(self, config: FieldConfig) -> FieldConfig:
+        trainer = replace(config.trainer, load_dir=config.trainer.get_checkpoint_dir())
         config = replace(config, trainer=trainer)
         return config
 

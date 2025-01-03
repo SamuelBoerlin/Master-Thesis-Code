@@ -145,11 +145,11 @@ class Evaluation:
                 CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
                 self.__run_pipeline(file, stages)
 
-    def __run_pipeline(
-        self, file: Path, stages: Optional[List[Pipeline.Stage]] = None, handle_errors: bool = True
-    ) -> bool:
+    def __run_pipeline(self, file: Path, stages: Optional[List[Pipeline.Stage]], handle_errors: bool = True) -> bool:
+        pipeline_str = f"[{', '.join([stage.name for stage in stages])}]"
+
         with ProcessResult() as result:
-            self.logger.info('Starting pipeline for file "%s"', file)
+            self.logger.info('Starting pipeline %s for file "%s"', pipeline_str, file)
 
             process: Process = None
             try:
@@ -180,11 +180,13 @@ class Evaluation:
                     pass
 
                 if result.success:
-                    self.logger.info('Finished pipeline for file "%s"', file)
+                    self.logger.info('Finished pipeline %s for file "%s"', pipeline_str, file)
                 elif result.msg is not None:
-                    self.logger.error('Failed pipeline for file "%s" due to exception:\n%s', file, result.msg)
+                    self.logger.error(
+                        'Failed pipeline %s for file "%s" due to exception:\n%s', pipeline_str, file, result.msg
+                    )
                 else:
-                    self.logger.error('Failed pipeline for file "%s" due to unknown reason', file)
+                    self.logger.error('Failed pipeline %s for file "%s" due to unknown reason', pipeline_str, file)
 
             return result.success
 
