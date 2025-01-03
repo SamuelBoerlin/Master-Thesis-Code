@@ -42,7 +42,10 @@ class EvaluationConfig(InstantiateConfig):
     stage_by_stage: bool = False
     """Whether to process the objects stage-by-stage (i.e. first SAMPLE_VIEWS for all objects, then RENDER_VIEWS, etc.) instead of all stages object-by-object"""
 
-    up_to_stage: Optional[Pipeline.Stage] = None
+    from_stage: Optional[Pipeline.Stage] = None
+    """If configured the pipeline is only run from this stage and no earlier"""
+
+    to_stage: Optional[Pipeline.Stage] = None
     """If configured the pipeline is only run up to this stage and no further"""
 
 
@@ -118,7 +121,7 @@ class Evaluation:
             logger_file_handler.close()
 
     def __run_stage_by_stage(self) -> None:
-        stages = self.config.up_to_stage.up_to() if self.config.up_to_stage is not None else None
+        stages = Pipeline.Stage.between(self.config.from_stage, self.config.to_stage, default=Pipeline.Stage.all())
 
         for stage in stages:
             CONSOLE.log(f"Processing stage {str(stage)}...")
@@ -132,7 +135,7 @@ class Evaluation:
                     self.__run_pipeline(file, [stage])
 
     def __run_object_by_object(self) -> None:
-        stages = self.config.up_to_stage.up_to() if self.config.up_to_stage is not None else None
+        stages = Pipeline.Stage.between(self.config.from_stage, self.config.to_stage, default=Pipeline.Stage.all())
 
         for category in self.lvis_dataset.keys():
             CONSOLE.log(f"Processing category {category}...")

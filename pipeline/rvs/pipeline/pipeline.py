@@ -269,5 +269,24 @@ class Pipeline:
         CLUSTER_EMBEDDINGS = 6
         SELECT_VIEWS = 7
 
-        def up_to(self) -> List["Pipeline.Stage"]:
+        def before(self) -> List["Pipeline.Stage"]:
             return [stage for stage in Pipeline.Stage if stage.value <= self.value]
+
+        def after(self) -> List["Pipeline.Stage"]:
+            return [stage for stage in Pipeline.Stage if stage.value >= self.value]
+
+        @staticmethod
+        def all() -> List["Pipeline.Stage"]:
+            return [s for s in Pipeline.Stage]
+
+        @staticmethod
+        def between(
+            start: Optional["Pipeline.Stage"], end: Optional["Pipeline.Stage"], default: List["Pipeline.Stage"] = []
+        ) -> List["Pipeline.Stage"]:
+            if start is not None and end is not None:
+                return [s for s in start.after() if s in end.before()]
+            elif start is not None:
+                return start.after()
+            elif end is not None:
+                return end.before()
+            return default
