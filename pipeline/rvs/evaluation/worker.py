@@ -1,3 +1,4 @@
+import sys
 import traceback
 from pathlib import Path
 from typing import List, Optional
@@ -19,8 +20,10 @@ def pipeline_worker_func(
             result.success = True
             result.close()
     except BaseException as ex:
+        msg = traceback.format_exc()
+        print(msg, file=sys.stderr, flush=True)
         if result is not None:
             result.success = False
-            result.msg = traceback.format_exc()
+            result.msg = msg
             result.close()
         raise ex
