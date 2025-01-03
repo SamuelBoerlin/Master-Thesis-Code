@@ -1,16 +1,18 @@
-import os
-import signal
+import logging
+import traceback
 from dataclasses import dataclass, field, replace
+from logging import Formatter, Logger
 from pathlib import Path
-from time import sleep, time
 from typing import Dict, List, Optional, Set, Type
 
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.utils.rich_utils import CONSOLE
 from objaverse import load_lvis_annotations, load_objects
-from torch.multiprocessing import Process, set_start_method
+from torch.multiprocessing import Process
 
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
+from rvs.evaluation.process import ProcessResult, start_process, stop_process
+from rvs.evaluation.worker import pipeline_worker_func
 from rvs.pipeline.pipeline import Pipeline, PipelineConfig
 from rvs.utils.console import file_link
 
@@ -44,12 +46,6 @@ class EvaluationConfig(InstantiateConfig):
     """If configured the pipeline is only run up to this stage and no further"""
 
 
-def run_pipeline_worker(
-    instance: PipelineEvaluationInstance, file: Path, stages: Optional[List[Pipeline.Stage]] = None
-) -> None:
-    instance.run(file, stages)
-
-
 class Evaluation:
     config: EvaluationConfig
 
@@ -62,10 +58,21 @@ class Evaluation:
     intermediate_dir: Path
     """Output directory for intermediate results"""
 
+    @property
+    def log_file_path(self) -> Path:
+        return self.config.output_dir / "logs.log"
+
+    logger: Logger
+    logger_format: Formatter
+
     def __init__(self, config: EvaluationConfig):
         self.config = config
 
     def init(self) -> None:
+        self.logger = Logger(__name__)
+        self.logger_format = Formatter(fmt="%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+        self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
         self.intermediate_dir = self.config.output_dir / "intermediate"
         self.intermediate_dir.mkdir(parents=True, exist_ok=True)
 
@@ -97,10 +104,18 @@ class Evaluation:
         return dataset
 
     def run(self) -> None:
-        if self.config.stage_by_stage:
-            self.__run_stage_by_stage()
-        else:
-            self.__run_object_by_object()
+        logger_file_handler = logging.FileHandler(self.log_file_path)
+        logger_file_handler.setFormatter(self.logger_format)
+        self.logger.addHandler(logger_file_handler)
+
+        try:
+            if self.config.stage_by_stage:
+                self.__run_stage_by_stage()
+            else:
+                self.__run_object_by_object()
+        finally:
+            self.logger.removeHandler(logger_file_handler)
+            logger_file_handler.close()
 
     def __run_stage_by_stage(self) -> None:
         stages = self.config.up_to_stage.up_to() if self.config.up_to_stage is not None else None
@@ -127,31 +142,49 @@ class Evaluation:
                 CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
                 self.__run_pipeline(file, stages)
 
-    def __run_pipeline(self, file: Path, stages: Optional[List[Pipeline.Stage]] = None) -> None:
-        set_start_method(
-            "spawn", force=True
-        )  # Required for CUDA: https://pytorch.org/docs/main/notes/multiprocessing.html
-        process = Process(
-            target=run_pipeline_worker,
-            args=(
-                PipelineEvaluationInstance(self.__configure_pipeline(self.config.pipeline), self.intermediate_dir),
-                file,
-                stages,
-            ),
-            daemon=True,
-        )
-        try:
-            process.start()
-            process.join()
-        finally:
-            stop_time = time()
-            while process.is_alive():
-                elapsed_time = time() - stop_time
-                if elapsed_time > 1.0:
-                    process.kill()
-                elif elapsed_time > 0.1:
-                    os.kill(process.pid, signal.SIGINT)
-                sleep(0.01)
+    def __run_pipeline(
+        self, file: Path, stages: Optional[List[Pipeline.Stage]] = None, handle_errors: bool = True
+    ) -> bool:
+        self.logger.info('Starting pipeline for file "%s"', file)
+
+        with ProcessResult() as result:
+            process: Process = None
+            try:
+                process = start_process(
+                    target=pipeline_worker_func,
+                    args=(
+                        PipelineEvaluationInstance(
+                            self.__configure_pipeline(self.config.pipeline), self.intermediate_dir
+                        ),
+                        file,
+                        stages,
+                        result,
+                    ),
+                )
+                process.join()
+                return True
+            except Exception as ex:
+                if handle_errors:
+                    result.success = False
+                    result.msg = traceback.format_exc()
+                else:
+                    raise ex
+            finally:
+                try:
+                    stop_process(process)
+                    process.join()
+                    process.close()
+                except Exception:
+                    pass
+
+                if result.success:
+                    self.logger.info('Finished pipeline for file "%s"', file)
+                elif result.msg is not None:
+                    self.logger.error('Failed pipeline for file "%s" due to exception:\n%s', file, result.msg)
+                else:
+                    self.logger.error('Failed pipeline for file "%s" due to unknown reason', file)
+
+        return False
 
     def __configure_pipeline(self, config: PipelineConfig) -> PipelineConfig:
         config = replace(self.config.pipeline)
