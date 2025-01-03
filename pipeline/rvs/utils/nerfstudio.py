@@ -106,11 +106,11 @@ def save_transforms_json(
 
 class ThreadedImageSaver:
     output_dir: Path
-    callback: Optional[Callable[[View, im.Image], None]]
+    callback: Optional[Callable[[View, im.Image, Path], None]]
     executor: Executor
 
     def __init__(
-        self, output_dir: Path, threads: int = 1, callback: Optional[Callable[[View, im.Image], None]] = None
+        self, output_dir: Path, threads: int = 1, callback: Optional[Callable[[View, im.Image, Path], None]] = None
     ) -> None:
         self.output_dir = output_dir
         self.callback = callback

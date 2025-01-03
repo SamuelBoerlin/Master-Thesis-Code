@@ -13,7 +13,6 @@ from PIL import Image as im
 from pyglet import gl
 from pyrender.constants import RenderFlags
 from trimesh import Scene
-from trimesh.scene import Camera
 from trimesh.viewer import SceneViewer
 
 from rvs.pipeline.views import View
@@ -115,6 +114,9 @@ class TrimeshRenderer(Renderer):
             resolution=[self.config.width, self.config.height],
             background=self.config.background,
             window_conf=pyglet_conf,
+            flags={
+                "cull": False,
+            },
         )
 
         try:
