@@ -145,9 +145,9 @@ class Evaluation:
     def __run_pipeline(
         self, file: Path, stages: Optional[List[Pipeline.Stage]] = None, handle_errors: bool = True
     ) -> bool:
-        self.logger.info('Starting pipeline for file "%s"', file)
-
         with ProcessResult() as result:
+            self.logger.info('Starting pipeline for file "%s"', file)
+
             process: Process = None
             try:
                 process = start_process(
@@ -162,7 +162,6 @@ class Evaluation:
                     ),
                 )
                 process.join()
-                return True
             except Exception as ex:
                 if handle_errors:
                     result.success = False
@@ -184,7 +183,7 @@ class Evaluation:
                 else:
                     self.logger.error('Failed pipeline for file "%s" due to unknown reason', file)
 
-        return False
+            return result.success
 
     def __configure_pipeline(self, config: PipelineConfig) -> PipelineConfig:
         config = replace(self.config.pipeline)
