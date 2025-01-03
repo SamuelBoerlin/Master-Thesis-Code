@@ -4,7 +4,6 @@ import os
 # Required for headless rendering with pyrenderer and trimesh
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["PYGLET_HEADLESS"] = "1"
-
 import tyro
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
 

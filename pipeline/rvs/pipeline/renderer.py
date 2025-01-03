@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Type
 
 import numpy as np
+import pyglet
 import pyrender
 import trimesh
 from nerfstudio.configs.base_config import InstantiateConfig
@@ -13,6 +14,7 @@ from pyglet import gl
 from pyrender.constants import RenderFlags
 from trimesh import Scene
 from trimesh.scene import Camera
+from trimesh.viewer import SceneViewer
 
 from rvs.pipeline.views import View
 from rvs.utils.trimesh import normalize_scene
@@ -101,11 +103,47 @@ class TrimeshRenderer(Renderer):
         if sample_positions is not None:
             self.add_sample_positions(scene, sample_positions, sample_colors=sample_colors)
 
-        camera = Camera(fov=[self.config.fov_x, self.config.fov_y])
+        # Need to set alpha_size=8 to enable alpha channel. This is not set by default and it seems
+        # in the headless environment it defaults to 0 which of course disables the alpha channel.
+        # Other defaults are taken from trimesh SceneViewer.__init__()
+        pyglet_conf = gl.Config(sample_buffers=1, samples=4, depth_size=24, double_buffer=True, alpha_size=8)
 
-        for view in views:
-            with self.render_view(scene, camera, view) as image:
-                callback(view, image)
+        viewer = SceneViewer(
+            scene,
+            start_loop=False,
+            visible=False,
+            resolution=[self.config.width, self.config.height],
+            background=self.config.background,
+            window_conf=pyglet_conf,
+        )
+
+        try:
+
+            def redraw_viewer() -> None:
+                pyglet.clock.tick()
+                viewer.switch_to()
+                viewer.dispatch_events()
+                viewer.dispatch_event("on_draw")
+                viewer.flip()
+
+            for _ in range(2):
+                redraw_viewer()
+
+            for view in views:
+                scene.camera_transform = view.transform
+
+                redraw_viewer()
+
+                with io.BytesIO() as buffer:
+                    viewer.save_image(buffer)
+                    buffer.seek(0)
+
+                    with im.open(buffer) as image:
+                        image.load()
+                        self.process_image(image)
+                        callback(view, image)
+        finally:
+            viewer.close()
 
     def add_sample_positions(
         self, scene: Scene, sample_positions: NDArray, sample_colors: Optional[NDArray] = None
@@ -124,27 +162,6 @@ class TrimeshRenderer(Renderer):
             sphere_mesh.visual.vertex_colors = sphere_mesh.vertices * 0.0 + color
 
             scene.add_geometry(sphere_mesh, transform=transform)
-
-    def render_view(self, scene: Scene, camera: Camera, view: View) -> im.Image:
-        scene.camera_transform = view.transform
-
-        # Need to set alpha_size=8 to enable alpha channel. This is not set by default and it seems
-        # in the headless environment it defaults to 0 which of course disables the alpha channel.
-        # Other defaults are taken from trimesh SceneViewer.__init__()
-        pyglet_conf = gl.Config(sample_buffers=1, samples=4, depth_size=24, double_buffer=True, alpha_size=8)
-
-        png_bytes = scene.save_image(
-            resolution=[self.config.width, self.config.height],
-            background=self.config.background,
-            visible=False,
-            window_conf=pyglet_conf,
-        )
-
-        with io.BytesIO(png_bytes) as buf:
-            image = im.open(buf)
-            image.load()
-            self.process_image(image)
-            return image
 
     def process_image(self, image: im.Image) -> None:
         if False and self.config.background[3] == 0:

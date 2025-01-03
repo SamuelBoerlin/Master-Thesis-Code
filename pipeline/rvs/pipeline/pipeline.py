@@ -17,7 +17,7 @@ from rvs.pipeline.selection import ViewSelection, ViewSelectionConfig
 from rvs.pipeline.views import View, Views, ViewsConfig
 from rvs.utils.console import file_link
 from rvs.utils.debug import render_sample_clusters, render_sample_positions
-from rvs.utils.nerfstudio import get_frame_name, save_transforms_frame, save_transforms_json
+from rvs.utils.nerfstudio import ThreadedImageSaver, get_frame_name, save_transforms_frame, save_transforms_json
 
 
 @dataclass
@@ -136,7 +136,8 @@ class Pipeline:
 
         if self.should_run_stage(Pipeline.Stage.RENDER_VIEWS):
             CONSOLE.log("Rendering views...")
-            self.renderer.render(self.config.model_file, pipeline_state.training_views, self.__save_view)
+            with ThreadedImageSaver(self.__renderer_output_dir, callback=self.__on_saved_view) as saver:
+                self.renderer.render(self.config.model_file, pipeline_state.training_views, saver.save)
 
         for view in pipeline_state.training_views:
             self.__set_view_path(view)
@@ -237,8 +238,7 @@ class Pipeline:
         CONSOLE.log(f"Saved views transforms to {file_link(path)}")
         return path
 
-    def __save_view(self, view: View, image: im.Image) -> Path:
-        path = save_transforms_frame(self.__renderer_output_dir, view, image, set_path=True)
+    def __on_saved_view(self, view: View, image: im.Image, path: Path) -> None:
         CONSOLE.log(f"Saved view {view.index} to {file_link(path)}")
         return path
 

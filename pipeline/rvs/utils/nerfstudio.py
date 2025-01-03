@@ -1,6 +1,7 @@
 import json
+from concurrent.futures import Executor, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from PIL import Image as im
 
@@ -101,3 +102,45 @@ def save_transforms_json(
     with path.open("w") as f:
         f.write(text)
     return path
+
+
+class ThreadedImageSaver:
+    output_dir: Path
+    callback: Optional[Callable[[View, im.Image], None]]
+    executor: Executor
+
+    def __init__(
+        self, output_dir: Path, threads: int = 1, callback: Optional[Callable[[View, im.Image], None]] = None
+    ) -> None:
+        self.output_dir = output_dir
+        self.callback = callback
+        self.executor = ThreadPoolExecutor(max_workers=threads)
+
+    def save(
+        self,
+        view: View,
+        image: im.Image,
+        frame_dir: Path = Path("images/"),
+        frame_name: Optional[str] = None,
+        set_path: bool = True,
+    ) -> None:
+        self.executor.submit(self.__save_image, view, image, frame_dir, frame_name, set_path)
+
+    def __save_image(
+        self, view: View, image: im.Image, frame_dir: Path, frame_name: Optional[str], set_path: bool
+    ) -> None:
+        path = save_transforms_frame(
+            self.output_dir, view, image, frame_dir=frame_dir, frame_name=frame_name, set_path=set_path
+        )
+        if self.callback is not None:
+            self.callback(view, image, path)
+        return path
+
+    def close(self):
+        self.executor.shutdown(wait=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
