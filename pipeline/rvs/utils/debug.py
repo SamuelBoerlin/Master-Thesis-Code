@@ -1,7 +1,11 @@
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, List, Optional
 
 import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.cm import get_cmap
+from matplotlib.patches import Patch
 from numpy.typing import NDArray
 from PIL import Image as im
 
@@ -12,7 +16,12 @@ def render_sample_positions(
     file: Path, view: View, sample_positions: NDArray, callback: Callable[[View, im.Image], None]
 ) -> None:
     renderer = TrimeshRenderer(TrimeshRendererConfig())
-    renderer.render(file, [view], callback, sample_positions=sample_positions)
+    renderer.render(
+        file,
+        [view],
+        lambda view, image: render_image_plot(view, image, callback),
+        sample_positions=sample_positions,
+    )
 
 
 def render_sample_clusters(
@@ -24,46 +33,99 @@ def render_sample_clusters(
     callback: Callable[[View, im.Image], None],
     hard_assignments: bool = False,
 ) -> None:
-    if sample_clusters.shape[0] != 3:
-        raise Exception("Can only render exactly 3 clusters")
+    num_clusters = sample_clusters.shape[0]
+    num_samples = sample_embeddings.shape[0]
 
-    r_embedding = sample_clusters[0]
-    g_embedding = sample_clusters[1]
-    b_embedding = sample_clusters[2]
+    colors = cluster_colors(num_clusters)
+    labels = [str(i + 1) for i in range(num_clusters)]
 
-    sample_colors = np.zeros((sample_embeddings.shape[0], 3))
+    sample_colors = np.zeros((num_samples, 3))
 
-    for i in range(sample_embeddings.shape[0]):
+    for i in range(num_samples):
         sample_embedding = sample_embeddings[i] / np.linalg.norm(sample_embeddings[i])
 
         if not hard_assignments:
-            sample_colors[i, 0] = np.dot(r_embedding, sample_embedding)
-            sample_colors[i, 1] = np.dot(g_embedding, sample_embedding)
-            sample_colors[i, 2] = np.dot(b_embedding, sample_embedding)
+            sum = 0.0
+            for j in range(num_clusters):
+                weight = np.dot(sample_clusters[j], sample_embedding)
+                sample_colors[i] += weight * colors[j]
+                sum += weight
+            if sum > 0.0:
+                sample_colors[i] /= sum
         else:
             best = -1.0
-
-            r_sim = np.dot(r_embedding, sample_embedding)
-            g_sim = np.dot(g_embedding, sample_embedding)
-            b_sim = np.dot(b_embedding, sample_embedding)
-
-            if r_sim > best:
-                best = r_sim
-                sample_colors[i, 0] = 1.0
-                sample_colors[i, 1] = 0.0
-                sample_colors[i, 2] = 0.0
-
-            if g_sim > best:
-                best = g_sim
-                sample_colors[i, 0] = 0.0
-                sample_colors[i, 1] = 1.0
-                sample_colors[i, 2] = 0.0
-
-            if b_sim > best:
-                best = b_sim
-                sample_colors[i, 0] = 0.0
-                sample_colors[i, 1] = 0.0
-                sample_colors[i, 2] = 1.0
+            for j in range(num_clusters):
+                sim = np.dot(sample_clusters[j], sample_embedding)
+                if sim > best:
+                    best = sim
+                    sample_colors[i] = colors[j]
 
     renderer = TrimeshRenderer(TrimeshRendererConfig())
-    renderer.render(file, [view], callback, sample_positions=sample_positions, sample_colors=sample_colors)
+    renderer.render(
+        file,
+        [view],
+        lambda view, image: render_image_plot(
+            view, image, callback, figure_setup=color_legend(colors, labels, "Clusters")
+        ),
+        sample_positions=sample_positions,
+        sample_colors=sample_colors,
+    )
+
+
+def render_image_plot(
+    view: View,
+    image: im.Image,
+    callback: Callable[[View, im.Image], None],
+    figure_setup: Optional[Callable[[plt.Figure, plt.Axes], None]] = None,
+) -> None:
+    if callback is None:
+        return
+
+    fig, ax = plt.subplots()
+    try:
+        ax.imshow(image)
+
+        ax.axis("off")
+        ax.set_aspect("equal")
+
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        fig.set_facecolor((0, 0, 0, 0))
+
+        if figure_setup is not None:
+            figure_setup(fig, ax)
+
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
+
+        data = canvas.buffer_rgba()
+
+        with im.frombuffer("RGBA", canvas.get_width_height(), data, "raw", "RGBA", 0, 1) as plot_image:
+            callback(view, plot_image)
+    finally:
+        plt.close(fig)
+
+
+def color_legend(colors: List[Any], labels: List[str], title: str) -> Callable[[plt.Figure, plt.Axes], None]:
+    def figure_setup(fig: plt.Figure, ax: plt.Axes) -> None:
+        patches = [Patch(color=color, label=label) for color, label in zip(colors, labels)]
+        ax.legend(handles=patches, title=title)
+
+    return figure_setup
+
+
+def cluster_colors(num_clusters: int) -> List[Any]:
+    assert num_clusters >= 0
+    if num_clusters == 0:
+        return []
+    elif num_clusters <= 3:
+        return [
+            np.array([1.0, 0.0, 0.0]),
+            np.array([0.0, 0.0, 1.0]),
+            np.array([0.0, 1.0, 0.0]),
+        ][:num_clusters]
+    elif num_clusters <= 10:
+        cmap = get_cmap("tab10")
+        return [cmap(i) for i in range(num_clusters)]
+    else:
+        cmap = get_cmap("gist_rainbow", num_clusters)
+        return [cmap(i) for i in range(num_clusters)]
