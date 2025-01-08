@@ -10,6 +10,7 @@ from nerfstudio.utils.rich_utils import CONSOLE
 from objaverse import load_lvis_annotations, load_objects
 from torch.multiprocessing import Process
 
+from rvs.evaluation.embedder import Embedder, EmbedderConfig
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.process import ProcessResult, start_process, stop_process
 from rvs.evaluation.worker import pipeline_worker_func
@@ -68,6 +69,8 @@ class Evaluation:
     logger: Logger
     logger_format: Formatter
 
+    embedder: Embedder
+
     def __init__(self, config: EvaluationConfig):
         self.config = config
 
@@ -78,6 +81,9 @@ class Evaluation:
 
         self.intermediate_dir = self.config.output_dir / "intermediate"
         self.intermediate_dir.mkdir(parents=True, exist_ok=True)
+
+        CONSOLE.log("Setting up embedder...")
+        self.embedder = EmbedderConfig().setup()
 
         CONSOLE.log("Loading LVIS dataset...")
         self.lvis_dataset = self.__load_lvis_dataset(self.config.lvis_categories, self.config.lvis_uids)

@@ -10,9 +10,9 @@ from rvs.pipeline.pipeline import PipelineConfig
 
 def adapt_pipeline_config(config: PipelineConfig) -> PipelineConfig:
     config = replace(config)
-    config.render_sample_positions_of_views = [11]
-    config.render_sample_clusters_of_views = [11]
-    config.render_selected_views = True
+    # config.render_sample_positions_of_views = [11]
+    # config.render_sample_clusters_of_views = [11]
+    # config.render_selected_views = True
     return config
 
 
