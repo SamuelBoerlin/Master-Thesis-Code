@@ -3,14 +3,14 @@ import traceback
 from dataclasses import dataclass, field, replace
 from logging import Formatter, Logger
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Type
+from typing import List, Optional, Set, Type
 
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.utils.rich_utils import CONSOLE
-from objaverse import load_lvis_annotations, load_objects
 from torch.multiprocessing import Process
 
 from rvs.evaluation.embedder import Embedder, EmbedderConfig
+from rvs.evaluation.lvis import LVISDataset
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.process import ProcessResult, start_process, stop_process
 from rvs.evaluation.worker import pipeline_worker_func
@@ -25,13 +25,13 @@ class EvaluationConfig(InstantiateConfig):
     pipeline: PipelineConfig = field(default_factory=lambda: PipelineConfig)
     """Configuration of the pipeline to use for the evaluation"""
 
-    lvis_categories: Set[str] = None
+    lvis_categories: Optional[Set[str]] = None
     """List of LVIS categories used in the evaluation (unconfigured = all)"""
 
-    lvis_uids: Set[str] = None
+    lvis_uids: Optional[Set[str]] = None
     """List of LVIS uids used in the evaluation (unconfigured = all)"""
 
-    lvis_download_processes = 8
+    lvis_download_processes: int = 8
     """Number of processes to use for downloading the 3D model files"""
 
     output_dir: Path = Path("outputs")
@@ -49,15 +49,19 @@ class EvaluationConfig(InstantiateConfig):
     to_stage: Optional[Pipeline.Stage] = None
     """If configured the pipeline is only run up to this stage and no further"""
 
+    # FIXME This (or any other further "sub-configs") breaks tyro for some strange reason...
+    # embedder: EmbedderConfig = field(defaulut_factory=lambda: EmbedderConfig)
+    # """Configuration of the CLIP embedder used for the precision/recall/accuracy evaluation"""
+
 
 class Evaluation:
     config: EvaluationConfig
 
-    lvis_dataset: Dict[str, List[str]]
-    """Mapping of LVIS category to list of objaverse 1.0 uids"""
+    lvis: LVISDataset
+    """Objaverse 1.0 LVIS dataset"""
 
-    lvis_files: Dict[str, str]
-    """Mapping of LVIS objaverse 1.0 uid to local file path"""
+    lvis_cache_dir: Path
+    """Directory for caching lvis dataset"""
 
     intermediate_dir: Path
     """Output directory for intermediate results"""
@@ -85,32 +89,13 @@ class Evaluation:
         CONSOLE.log("Setting up embedder...")
         self.embedder = EmbedderConfig().setup()
 
-        CONSOLE.log("Loading LVIS dataset...")
-        self.lvis_dataset = self.__load_lvis_dataset(self.config.lvis_categories, self.config.lvis_uids)
+        self.lvis_cache_dir = self.config.output_dir / "lvis"
+        self.lvis_cache_dir.mkdir(parents=True, exist_ok=True)
 
-        CONSOLE.rule("Loading LVIS files...")
-        self.lvis_files = {}
-        for k in self.lvis_dataset.keys():
-            CONSOLE.log(f"Category: {k}")
-            category_files = load_objects(self.lvis_dataset[k], download_processes=self.config.lvis_download_processes)
-            CONSOLE.log(f"Files: {len(category_files)}")
-            self.lvis_files.update(category_files)
-        CONSOLE.rule()
-
-    def __load_lvis_dataset(self, categories: Optional[Set[str]], uids: Optional[Set[str]]) -> Dict[str, List[str]]:
-        dataset = load_lvis_annotations()
-        if categories is not None:
-            for k in list(dataset.keys()):
-                if k not in categories:
-                    del dataset[k]
-        if uids is not None:
-            for k in list(dataset.keys()):
-                filtered = [u for u in dataset[k] if u in uids]
-                if len(filtered) > 0:
-                    dataset[k] = filtered
-                else:
-                    del dataset[k]
-        return dataset
+        self.lvis = LVISDataset(self.config.lvis_categories, self.config.lvis_uids, self.config.lvis_download_processes)
+        if self.lvis.load_cache(self.lvis_cache_dir) is None:
+            self.lvis.load()
+            self.lvis.save_cache(self.lvis_cache_dir)
 
     def run(self) -> None:
         logger_file_handler = logging.FileHandler(self.log_file_path)
@@ -132,22 +117,22 @@ class Evaluation:
         for stage in stages:
             CONSOLE.log(f"Processing stage {str(stage)}...")
 
-            for category in self.lvis_dataset.keys():
+            for category in self.lvis.dataset.keys():
                 CONSOLE.log(f"Processing category {category}...")
 
-                for uid in self.lvis_dataset[category]:
-                    file = Path(self.lvis_files[uid])
+                for uid in self.lvis.dataset[category]:
+                    file = Path(self.lvis.uid_to_file[uid])
                     CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
                     self.__run_pipeline(file, [stage])
 
     def __run_object_by_object(self) -> None:
         stages = Pipeline.Stage.between(self.config.from_stage, self.config.to_stage, default=Pipeline.Stage.all())
 
-        for category in self.lvis_dataset.keys():
+        for category in self.lvis.dataset.keys():
             CONSOLE.log(f"Processing category {category}...")
 
-            for uid in self.lvis_dataset[category]:
-                file = Path(self.lvis_files[uid])
+            for uid in self.lvis.dataset[category]:
+                file = Path(self.lvis.uid_to_file[uid])
                 CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
                 self.__run_pipeline(file, stages)
 
