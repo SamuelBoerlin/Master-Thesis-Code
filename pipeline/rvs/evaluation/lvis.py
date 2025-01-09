@@ -24,6 +24,9 @@ class LVISDataset:
     uid_to_file: Dict[str, str] = dict()
     """Mapping of LVIS objaverse 1.0 uid to local file path"""
 
+    uid_to_category: Dict[str, str] = dict()
+    """Mapping of LVIS objaverse 1.0 uid to LVIS category"""
+
     @property
     def cache_key(self) -> str:
         digest = hashlib.sha1()
@@ -42,13 +45,14 @@ class LVISDataset:
 
     def load(self) -> None:
         CONSOLE.log("Loading LVIS dataset...")
-        self.dataset = self.load_lvis_dataset(self.categories, self.uids)
+        self.dataset = self.fetch_lvis_dataset(self.categories, self.uids)
 
         CONSOLE.rule("Loading LVIS files...")
-        self.uid_to_file = self.load_lvis_files()
+        self.uid_to_file = self.get_lvis_files()
+        self.__update_uid_to_category_mapping()
         CONSOLE.rule()
 
-    def load_lvis_dataset(self, categories: Optional[Set[str]], uids: Optional[Set[str]]) -> Dict[str, List[str]]:
+    def fetch_lvis_dataset(self, categories: Optional[Set[str]], uids: Optional[Set[str]]) -> Dict[str, List[str]]:
         dataset = load_lvis_annotations()
         if categories is not None:
             for k in list(dataset.keys()):
@@ -63,7 +67,7 @@ class LVISDataset:
                     del dataset[k]
         return dataset
 
-    def load_lvis_files(self) -> Dict[str, str]:
+    def get_lvis_files(self) -> Dict[str, str]:
         files = {}
         for k in self.dataset.keys():
             CONSOLE.log(f"Category: {k}")
@@ -107,9 +111,16 @@ class LVISDataset:
             if set(cache_json["categories"]) == self.categories and set(cache_json["uids"]) == self.uids:
                 self.dataset = cache_json["dataset"]
                 self.uid_to_file = cache_json["uid_to_file"]
+                self.__update_uid_to_category_mapping()
 
                 return cache_file
 
         CONSOLE.log("Failed loading LVIS dataset from cache")
 
         return None
+
+    def __update_uid_to_category_mapping(self) -> None:
+        self.uid_to_category = dict()
+        for category in self.dataset.keys():
+            for uid in self.dataset[category]:
+                self.uid_to_category[uid] = category

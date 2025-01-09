@@ -72,18 +72,29 @@ class PipelineEvaluationInstance:
                 with transforms_json_path.open("w") as f:
                     f.write(transforms_json)
 
+    def create_pipeline_config(self, file: Path, stages: Optional[List[Pipeline.Stage]] = None) -> PipelineConfig:
+        return PipelineEvaluationInstance.configure_pipeline(self.config, self.pipeline_dir, file, stages)
+
     @staticmethod
-    def load_pipeline(
+    def configure_pipeline(
         config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[Pipeline.Stage]]
-    ) -> Pipeline:
+    ) -> PipelineConfig:
         config = replace(config)
-        config = PipelineEvaluationInstance.__configure_pipeline(config, output_dir, file, stages)
+        config = PipelineEvaluationInstance.__configure_pipeline_run_settings(config, output_dir, file, stages)
 
         config.set_timestamp()
 
         _set_random_seed(config.machine.seed)
 
-        pipeline: Pipeline = config.setup(local_rank=0, world_size=1)
+        return config
+
+    @staticmethod
+    def load_pipeline(
+        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[Pipeline.Stage]]
+    ) -> Pipeline:
+        pipeline: Pipeline = PipelineEvaluationInstance.configure_pipeline(config, output_dir, file, stages).setup(
+            local_rank=0, world_size=1
+        )
 
         pipeline.init()
 
@@ -93,7 +104,7 @@ class PipelineEvaluationInstance:
         return pipeline
 
     @staticmethod
-    def __configure_pipeline(
+    def __configure_pipeline_run_settings(
         config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[Pipeline.Stage]]
     ) -> PipelineConfig:
         config.output_dir = output_dir / file.name

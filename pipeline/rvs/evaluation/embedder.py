@@ -69,16 +69,23 @@ class Embedder:
         return embedding
 
     def __load_image_numpy(self, file: Path) -> NDArray:
+        """Loads the image into a numpy uint8 array with shape H x W x C=3"""
         with im.open(file) as image:
-            data = np.array(image, dtype="float32")
+            data = np.array(image, dtype="float32") / 255.0
             assert len(data.shape) == 3
             if data.shape[2] == 4:
                 rgb = data[:, :, :3]
-                alpha = data[:, :, 4] / 255.0
-                data = rgb * alpha + 255.0 * self.config.background_color * (1.0 - alpha)
+                alpha = data[:, :, 3:]
+                data = rgb * alpha + self.config.background_color * (1.0 - alpha)
             assert data.shape[2] == 3
-            return data.clip(0, 255).astype("uint8")
+            return (data * 255.0).clip(0, 255).astype("uint8")
 
     def __load_image_tensor(self, file: Path) -> Tensor:
-        image = torch.from_numpy(self.__load_image_numpy(file).astype("float32") / 255.0).to(self.config.device)
+        """Loads the image into a pytorch float32 tensor with shape B=1 x C=3 x H x W"""
+        image = (
+            torch.from_numpy(self.__load_image_numpy(file).astype("float32") / 255.0)
+            .permute(2, 0, 1)
+            .unsqueeze(0)
+            .to(self.config.device)
+        )
         return image

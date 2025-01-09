@@ -10,6 +10,7 @@ from nerfstudio.utils.rich_utils import CONSOLE
 from torch.multiprocessing import Process
 
 from rvs.evaluation.embedder import Embedder, EmbedderConfig
+from rvs.evaluation.evaluation_method import evaluate_results
 from rvs.evaluation.lvis import LVISDataset
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.process import ProcessResult, start_process, stop_process
@@ -53,6 +54,9 @@ class EvaluationConfig(InstantiateConfig):
     # embedder: EmbedderConfig = field(defaulut_factory=lambda: EmbedderConfig)
     # """Configuration of the CLIP embedder used for the precision/recall/accuracy evaluation"""
 
+    eval_only: bool = False
+    """Run evaluation part only"""
+
 
 class Evaluation:
     config: EvaluationConfig
@@ -65,6 +69,9 @@ class Evaluation:
 
     intermediate_dir: Path
     """Output directory for intermediate results"""
+
+    results_dir: Path
+    """Output directory for final results"""
 
     @property
     def log_file_path(self) -> Path:
@@ -86,6 +93,9 @@ class Evaluation:
         self.intermediate_dir = self.config.output_dir / "intermediate"
         self.intermediate_dir.mkdir(parents=True, exist_ok=True)
 
+        self.results_dir = self.config.output_dir / "results"
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+
         CONSOLE.log("Setting up embedder...")
         self.embedder = EmbedderConfig().setup()
 
@@ -102,16 +112,21 @@ class Evaluation:
         logger_file_handler.setFormatter(self.logger_format)
         self.logger.addHandler(logger_file_handler)
 
-        try:
-            if self.config.stage_by_stage:
-                self.__run_stage_by_stage()
-            else:
-                self.__run_object_by_object()
-        finally:
-            self.logger.removeHandler(logger_file_handler)
-            logger_file_handler.close()
+        instance = PipelineEvaluationInstance(self.__configure_pipeline(self.config.pipeline), self.intermediate_dir)
 
-    def __run_stage_by_stage(self) -> None:
+        if not self.config.eval_only:
+            try:
+                if self.config.stage_by_stage:
+                    self.__run_stage_by_stage(instance)
+                else:
+                    self.__run_object_by_object(instance)
+            finally:
+                self.logger.removeHandler(logger_file_handler)
+                logger_file_handler.close()
+
+        evaluate_results(self.lvis, self.embedder, instance, self.results_dir)
+
+    def __run_stage_by_stage(self, instance: PipelineEvaluationInstance) -> None:
         stages = Pipeline.Stage.between(self.config.from_stage, self.config.to_stage, default=Pipeline.Stage.all())
 
         for stage in stages:
@@ -123,9 +138,9 @@ class Evaluation:
                 for uid in self.lvis.dataset[category]:
                     file = Path(self.lvis.uid_to_file[uid])
                     CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
-                    self.__run_pipeline(file, [stage])
+                    self.__run_pipeline(instance, file, [stage])
 
-    def __run_object_by_object(self) -> None:
+    def __run_object_by_object(self, instance: PipelineEvaluationInstance) -> None:
         stages = Pipeline.Stage.between(self.config.from_stage, self.config.to_stage, default=Pipeline.Stage.all())
 
         for category in self.lvis.dataset.keys():
@@ -134,9 +149,15 @@ class Evaluation:
             for uid in self.lvis.dataset[category]:
                 file = Path(self.lvis.uid_to_file[uid])
                 CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
-                self.__run_pipeline(file, stages)
+                self.__run_pipeline(instance, file, stages)
 
-    def __run_pipeline(self, file: Path, stages: Optional[List[Pipeline.Stage]], handle_errors: bool = True) -> bool:
+    def __run_pipeline(
+        self,
+        instance: PipelineEvaluationInstance,
+        file: Path,
+        stages: Optional[List[Pipeline.Stage]],
+        handle_errors: bool = True,
+    ) -> bool:
         pipeline_str = f"[{', '.join([stage.name for stage in stages])}]"
 
         with ProcessResult() as result:
@@ -147,9 +168,7 @@ class Evaluation:
                 process = start_process(
                     target=pipeline_worker_func,
                     args=(
-                        PipelineEvaluationInstance(
-                            self.__configure_pipeline(self.config.pipeline), self.intermediate_dir
-                        ),
+                        instance,
                         file,
                         stages,
                         result,
@@ -184,4 +203,5 @@ class Evaluation:
     def __configure_pipeline(self, config: PipelineConfig) -> PipelineConfig:
         config = replace(self.config.pipeline)
         config.timestamp = self.config.timestamp
+        config.set_timestamp()
         return config
