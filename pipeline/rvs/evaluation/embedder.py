@@ -57,19 +57,31 @@ class Embedder:
         self.clip_model.to(self.config.device)
 
     def embed_text(self, text: str) -> Tensor:
+        """Embeds the given text into a pytorch float32 tensor of shape B=1 x N"""
         embedding = self.clip_model.encode_text(self.text_preprocessing(text).to(self.config.device))
         embedding /= embedding.norm(dim=-1, keepdim=True)
         return embedding
 
+    def embed_text_numpy(self, text: str) -> NDArray:
+        """Embeds the given text into a numpy float32 array of shape N"""
+        with torch.no_grad():
+            return self.embed_text(text).detach().squeeze().cpu().numpy()
+
     def embed_image(self, file: Path) -> Tensor:
+        """Embeds the given image into a pytorch float32 tensor of shape B=1 x N"""
         image = self.__load_image_tensor(file)
         image = self.image_preprocessing(image)
         embedding = self.clip_model.encode_image(image)
         embedding /= embedding.norm(dim=-1, keepdim=True)
         return embedding
 
+    def embed_image_numpy(self, file: Path) -> NDArray:
+        """Embeds the given image into a numpy float32 array of shape N"""
+        with torch.no_grad():
+            return self.embed_image(file).detach().squeeze().cpu().numpy()
+
     def __load_image_numpy(self, file: Path) -> NDArray:
-        """Loads the image into a numpy uint8 array with shape H x W x C=3"""
+        """Loads the image into a numpy uint8 array of shape H x W x C=3"""
         with im.open(file) as image:
             data = np.array(image, dtype="float32") / 255.0
             assert len(data.shape) == 3
@@ -81,7 +93,7 @@ class Embedder:
             return (data * 255.0).clip(0, 255).astype("uint8")
 
     def __load_image_tensor(self, file: Path) -> Tensor:
-        """Loads the image into a pytorch float32 tensor with shape B=1 x C=3 x H x W"""
+        """Loads the image into a pytorch float32 tensor of shape B=1 x C=3 x H x W"""
         image = (
             torch.from_numpy(self.__load_image_numpy(file).astype("float32") / 255.0)
             .permute(2, 0, 1)

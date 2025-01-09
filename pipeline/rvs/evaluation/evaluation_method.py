@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Dict, List, Set
 
 import numpy as np
+from matplotlib import pyplot as plt
 from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.random import Generator
 from numpy.typing import NDArray
@@ -11,11 +12,16 @@ from rvs.evaluation.embedder import Embedder
 from rvs.evaluation.lvis import LVISDataset
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.utils.console import file_link
+from rvs.utils.map import convert_nested_maps_to_tuples, get_keys_of_nested_maps
+from rvs.utils.plot import grouped_bar_plot, save_figure
 
 
 def evaluate_results(
     lvis: LVISDataset, embedder: Embedder, instance: PipelineEvaluationInstance, output_dir: Path
 ) -> None:
+    CONSOLE.rule("Embedding prompts for categories...")
+    categories_embeddings = embed_categories(lvis.dataset.keys(), embedder)
+
     available_uids = set()
     for category in lvis.dataset.keys():
         for uid in lvis.dataset[category]:
@@ -41,6 +47,19 @@ def evaluate_results(
     )
     available_uids = avg_selected_views_embeddings.keys()
 
+    CONSOLE.rule("Calculate similarities...")
+    similarities = calculate_similarities(
+        lvis,
+        {
+            "avg. selected": avg_selected_views_embeddings,
+            "avg. random": avg_random_views_embeddings,
+        },
+        categories_embeddings,
+    )
+
+    CONSOLE.rule("Create results...")
+    plot_avg_similarities_per_category(lvis, similarities, output_dir / "similarities.png")
+
 
 def embed_selected_views_avg(
     lvis: LVISDataset,
@@ -62,12 +81,12 @@ def embed_selected_views_avg(
                 if image_file.is_file() and image_file.name.endswith(".png"):
                     CONSOLE.log(f"Embedding selected view {file_link(image_file)}")
 
-                    embedding = embedder.embed_image(image_file).detach().cpu().numpy()
+                    embedding = embedder.embed_image_numpy(image_file)
 
                     avg_embedding = embedding if avg_embedding is None else avg_embedding + embedding
 
             if avg_embedding is not None:
-                avg_embedding /= np.linalg.norm(avg_embedding, axis=1, keepdims=True)
+                avg_embedding /= np.linalg.norm(avg_embedding)
 
                 embeddings[uid] = avg_embedding
 
@@ -117,15 +136,101 @@ def embed_randomn_views_avg(
             for image_file in random_image_files:
                 CONSOLE.log(f"Embedding random view {file_link(image_file)}")
 
-                embedding = embedder.embed_image(image_file).detach().cpu().numpy()
+                embedding = embedder.embed_image_numpy(image_file)
 
                 avg_embedding = embedding if avg_embedding is None else avg_embedding + embedding
 
             if avg_embedding is not None:
-                avg_embedding /= np.linalg.norm(avg_embedding, axis=1, keepdims=True)
+                avg_embedding /= np.linalg.norm(avg_embedding)
 
                 embeddings[uid] = avg_embedding
 
                 CONSOLE.log(f"Embedded random views of {file_link(model_file)}")
 
     return embeddings
+
+
+def embed_categories(categories: List[str], embedder: Embedder) -> Dict[str, NDArray]:
+    embeddings = dict()
+
+    for category in tqdm(categories):
+        prompt = category_name_to_embedding_prompt(category)
+        CONSOLE.log(f"Embedding category {category} as '{prompt}'")
+        embeddings[category] = embedder.embed_text_numpy(prompt)
+
+    return embeddings
+
+
+def category_name_to_embedding_prompt(category: str) -> None:
+    return category.replace("_", " ")
+
+
+def get_categories_of_uids(lvis: LVISDataset, uids: List[str]) -> List[str]:
+    categories = set()
+    for uid in uids:
+        categories.add(lvis.uid_to_category[uid])
+    return sorted(list(categories))
+
+
+def calculate_similarities(
+    lvis: LVISDataset, embeddings: Dict[str, Dict[str, NDArray]], ground_truth: Dict[str, Dict[str, NDArray]]
+) -> Dict[str, Dict[str, float]]:
+    similarities: Dict[str, Dict[str, float]] = dict()  # method, uid, similarity
+
+    for method in embeddings.keys():
+        method_embeddings = embeddings[method]
+
+        method_similarities: Dict[str, float] = dict()
+
+        for uid in method_embeddings.keys():
+            category = lvis.uid_to_category[uid]
+
+            method_embedding = method_embeddings[uid]
+            ground_truth_embedding = ground_truth[category]
+
+            method_similarities[uid] = np.dot(ground_truth_embedding, method_embedding)
+
+        similarities[method] = method_similarities
+
+    return similarities
+
+
+def plot_avg_similarities_per_category(
+    lvis: LVISDataset, similarities: Dict[str, Dict[str, float]], file: Path
+) -> None:
+    categories = tuple(get_categories_of_uids(lvis, get_keys_of_nested_maps(similarities)))
+
+    avg_similarities: Dict[str, Dict[str, float]] = dict()  # method, category, similarity
+
+    for method in similarities.keys():
+        method_similarities = similarities[method]  # uid, similarity
+
+        method_avg_similarities: Dict[str, float] = {category: 0.0 for category in categories}  # category, similarity
+        method_avg_counts: Dict[str, int] = {category: 0 for category in categories}  # category, similarity
+
+        for uid in method_similarities.keys():
+            similarity = method_similarities[uid]
+
+            category = lvis.uid_to_category[uid]
+
+            method_avg_similarities[category] += similarity
+            method_avg_counts[category] += 1
+
+        for category in method_avg_similarities:
+            count = method_avg_counts[category]
+            if count > 0:
+                method_avg_similarities[category] /= count
+
+        avg_similarities[method] = method_avg_similarities
+
+    fig, ax = plt.subplots(layout="constrained")
+
+    grouped_bar_plot(
+        ax,
+        groups=categories,
+        values=convert_nested_maps_to_tuples(avg_similarities, categories),
+        xlabel="Categories",
+        ylabel="Cosine-similarity",
+    )
+
+    save_figure(fig, file)

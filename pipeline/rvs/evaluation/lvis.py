@@ -106,8 +106,6 @@ class LVISDataset:
 
             cache_json = json.loads(text)
 
-            print(cache_json)
-
             if set(cache_json["categories"]) == self.categories and set(cache_json["uids"]) == self.uids:
                 self.dataset = cache_json["dataset"]
                 self.uid_to_file = cache_json["uid_to_file"]
