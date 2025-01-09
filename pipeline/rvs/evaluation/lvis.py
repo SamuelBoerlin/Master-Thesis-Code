@@ -30,10 +30,13 @@ class LVISDataset:
     @property
     def cache_key(self) -> str:
         digest = hashlib.sha1()
-        for category in self.categories:
-            digest.update(str.encode(category))
-        for uids in self.uids:
-            digest.update(str.encode(uids))
+        if self.categories is not None:
+            for category in sorted(self.categories):
+                digest.update(str.encode(category))
+        digest.update(str.encode("\0"))
+        if self.uids is not None:
+            for uids in sorted(self.uids):
+                digest.update(str.encode(uids))
         return str(digest.hexdigest())
 
     def __init__(
@@ -82,11 +85,13 @@ class LVISDataset:
         CONSOLE.log(f"Saving LVIS dataset to cache ({file_link(cache_file)})...")
 
         cache_json = {
-            "categories": list(self.categories),
-            "uids": list(self.uids),
             "dataset": self.dataset,
             "uid_to_file": self.uid_to_file,
         }
+        if self.categories is not None:
+            cache_json["categories"] = list(self.categories)
+        if self.uids is not None:
+            cache_json["uids"] = list(self.uids)
 
         text = json.dumps(cache_json)
         with cache_file.open("w") as f:
@@ -106,7 +111,13 @@ class LVISDataset:
 
             cache_json = json.loads(text)
 
-            if set(cache_json["categories"]) == self.categories and set(cache_json["uids"]) == self.uids:
+            if (
+                ("categories" not in cache_json and self.categories is None)
+                or ("categories" in cache_json and set(cache_json["categories"]) == self.categories)
+            ) and (
+                ("uids" not in cache_json and self.uids is None)
+                or ("uids" in cache_json and set(cache_json["uids"]) == self.uids)
+            ):
                 self.dataset = cache_json["dataset"]
                 self.uid_to_file = cache_json["uid_to_file"]
                 self.__update_uid_to_category_mapping()
