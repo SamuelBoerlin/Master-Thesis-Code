@@ -1,13 +1,15 @@
 from typing import Any, Dict, List, Set, Tuple, TypeVar
 
-T = TypeVar("T")
+K1 = TypeVar("K1")
+K2 = TypeVar("K2")
+V = TypeVar("V")
 
 
-def convert_nested_maps_to_tuples(map: Dict[str, Dict[str, T]], key_order: List[str]) -> Dict[str, Tuple[T, ...]]:
-    ret: Dict[str, Tuple[T, ...]] = dict()
+def convert_nested_maps_to_tuples(map: Dict[K1, Dict[K2, V]], key_order: List[K2]) -> Dict[K1, Tuple[V, ...]]:
+    ret: Dict[K1, Tuple[V, ...]] = dict()
     for key in map:
         d = map[key]
-        values = []
+        values: List[V] = []
         for order_key in key_order:
             if order_key in d:
                 values.append(d[order_key])
@@ -15,8 +17,8 @@ def convert_nested_maps_to_tuples(map: Dict[str, Dict[str, T]], key_order: List[
     return ret
 
 
-def get_keys_of_nested_maps(map: Dict[str, Dict[str, Any]]) -> Set[str]:
-    uids = set()
+def get_keys_of_nested_maps(map: Dict[K1, Dict[K2, V]]) -> Set[K2]:
+    uids: Set[K2] = set()
     for key in map:
         for uid in map[key]:
             uids.add(uid)

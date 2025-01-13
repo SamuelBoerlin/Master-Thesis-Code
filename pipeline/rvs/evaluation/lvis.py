@@ -13,6 +13,7 @@ class LVISDataset:
     # Cache relevant settings
     categories: Optional[Set[str]]
     uids: Optional[Set[str]]
+    per_category_limit: Optional[int]
 
     # Cache irrelevant settings
     download_processes: int
@@ -37,37 +38,48 @@ class LVISDataset:
         if self.uids is not None:
             for uids in sorted(self.uids):
                 digest.update(str.encode(uids))
+        digest.update(str.encode("\0"))
+        if self.per_category_limit is not None:
+            digest.update(str.encode(str(self.per_category_limit)))
         return str(digest.hexdigest())
 
     def __init__(
-        self, lvis_categories: Optional[Set[str]], lvis_uids: Optional[Set[str]], lvis_download_processes: int
+        self,
+        lvis_categories: Optional[Set[str]],
+        lvis_uids: Optional[Set[str]],
+        lvis_download_processes: int = 4,
+        per_category_limit: Optional[int] = None,
     ) -> None:
         self.categories = lvis_categories
         self.uids = lvis_uids
-        self.download_processes = lvis_download_processes
+        self.download_processes = int(lvis_download_processes)
+        self.per_category_limit = int(per_category_limit) if per_category_limit is not None else None
 
     def load(self) -> None:
         CONSOLE.log("Loading LVIS dataset...")
-        self.dataset = self.fetch_lvis_dataset(self.categories, self.uids)
+        self.dataset = self.fetch_lvis_dataset()
 
         CONSOLE.rule("Loading LVIS files...")
         self.uid_to_file = self.get_lvis_files()
         self.__update_uid_to_category_mapping()
         CONSOLE.rule()
 
-    def fetch_lvis_dataset(self, categories: Optional[Set[str]], uids: Optional[Set[str]]) -> Dict[str, List[str]]:
+    def fetch_lvis_dataset(self) -> Dict[str, List[str]]:
         dataset = load_lvis_annotations()
-        if categories is not None:
+        if self.categories is not None:
             for k in list(dataset.keys()):
-                if k not in categories:
+                if k not in self.categories:
                     del dataset[k]
-        if uids is not None:
+        if self.uids is not None:
             for k in list(dataset.keys()):
-                filtered = [u for u in dataset[k] if u in uids]
+                filtered = [u for u in dataset[k] if u in self.uids]
                 if len(filtered) > 0:
                     dataset[k] = filtered
                 else:
                     del dataset[k]
+        if self.per_category_limit is not None:
+            for category in dataset.keys():
+                dataset[category] = dataset[category][: self.per_category_limit]
         return dataset
 
     def get_lvis_files(self) -> Dict[str, str]:
@@ -92,6 +104,8 @@ class LVISDataset:
             cache_json["categories"] = list(self.categories)
         if self.uids is not None:
             cache_json["uids"] = list(self.uids)
+        if self.per_category_limit is not None:
+            cache_json["per_category_limit"] = self.per_category_limit
 
         text = json.dumps(cache_json)
         with cache_file.open("w") as f:
@@ -109,17 +123,22 @@ class LVISDataset:
             with cache_file.open("r") as f:
                 text = f.read()
 
-            cache_json = json.loads(text)
+            cache_json: Dict = json.loads(text)
 
             if (
-                ("categories" not in cache_json and self.categories is None)
-                or ("categories" in cache_json and set(cache_json["categories"]) == self.categories)
-            ) and (
-                ("uids" not in cache_json and self.uids is None)
-                or ("uids" in cache_json and set(cache_json["uids"]) == self.uids)
+                (
+                    ("categories" not in cache_json and self.categories is None)
+                    or ("categories" in cache_json and set(cache_json["categories"]) == self.categories)
+                )
+                and (
+                    ("uids" not in cache_json and self.uids is None)
+                    or ("uids" in cache_json and set(cache_json["uids"]) == self.uids)
+                )
+                and cache_json.get("per_category_limit", None) == self.per_category_limit
             ):
                 self.dataset = cache_json["dataset"]
                 self.uid_to_file = cache_json["uid_to_file"]
+                self.per_category_limit = cache_json["per_category_limit"]
                 self.__update_uid_to_category_mapping()
 
                 return cache_file

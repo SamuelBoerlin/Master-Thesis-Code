@@ -35,6 +35,9 @@ class EvaluationConfig(InstantiateConfig):
     lvis_download_processes: int = 8
     """Number of processes to use for downloading the 3D model files"""
 
+    lvis_per_category_limit: Optional[int] = None
+    """Per category limit, useful for testing"""
+
     output_dir: Path = Path("outputs")
     """Relative or absolute output directory to save all output data"""
 
@@ -102,7 +105,12 @@ class Evaluation:
         self.lvis_cache_dir = self.config.output_dir / "lvis"
         self.lvis_cache_dir.mkdir(parents=True, exist_ok=True)
 
-        self.lvis = LVISDataset(self.config.lvis_categories, self.config.lvis_uids, self.config.lvis_download_processes)
+        self.lvis = LVISDataset(
+            self.config.lvis_categories,
+            self.config.lvis_uids,
+            self.config.lvis_download_processes,
+            self.config.lvis_per_category_limit,
+        )
         if self.lvis.load_cache(self.lvis_cache_dir) is None:
             self.lvis.load()
             self.lvis.save_cache(self.lvis_cache_dir)
