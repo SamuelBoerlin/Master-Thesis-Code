@@ -3,17 +3,23 @@ from typing import Dict, List, Set
 
 import numpy as np
 from nerfstudio.utils.rich_utils import CONSOLE
-from numpy.random import Generator
 from numpy.typing import NDArray
 from tqdm import tqdm
 
 from rvs.evaluation.analysis.precision_recall import calculate_precision_recall, plot_precision_recall
 from rvs.evaluation.analysis.similarity import calculate_similarity_to_ground_truth, plot_avg_similarities_per_category
 from rvs.evaluation.analysis.utils import count_category_items
+from rvs.evaluation.analysis.views import (
+    calculate_selected_views_avg_per_category,
+    calculte_selected_views_histogram_per_category,
+    embed_random_views_avg,
+    embed_selected_views_avg,
+    plot_selected_views_avg_per_category,
+    plot_selected_views_histogram,
+)
 from rvs.evaluation.embedder import Embedder
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
-from rvs.utils.console import file_link
 
 
 def evaluate_results(
@@ -49,6 +55,10 @@ def evaluate_results(
     )
     available_uids = avg_selected_views_embeddings.keys()
 
+    CONSOLE.rule("Calculate number of selected views...")
+    avg_number_of_views_per_category = calculate_selected_views_avg_per_category(lvis, available_uids, instance)
+    histogram_of_views_per_category = calculte_selected_views_histogram_per_category(lvis, available_uids, instance)
+
     CONSOLE.rule("Calculate similarities...")
     similarities = calculate_similarity_to_ground_truth(
         lvis,
@@ -71,6 +81,22 @@ def evaluate_results(
 
     CONSOLE.rule("Create results...")
 
+    plot_selected_views_avg_per_category(
+        avg_number_of_views_per_category,
+        output_dir / "nr_of_views_avg.png",
+        category_names={
+            category: category + " (" + str(count_category_items(lvis.uid_to_category, available_uids, category)) + ")"
+            for category in lvis.categories
+        },
+    )
+
+    for category in categories_embeddings.keys():
+        plot_selected_views_histogram(
+            histogram_of_views_per_category,
+            output_dir / "nr_of_views_histogram" / f"{category}.png",
+            category_filter={category},
+        )
+
     plot_avg_similarities_per_category(
         lvis,
         similarities,
@@ -85,98 +111,9 @@ def evaluate_results(
         plot_precision_recall(
             precision_recall,
             len(available_uids),
-            output_dir / f"precision_recall_{category}.png",
+            output_dir / "precision_recall" / f"{category}.png",
             category_filter={category},
         )
-
-
-def embed_selected_views_avg(
-    lvis: LVISDataset,
-    uids: Set[Uid],
-    embedder: Embedder,
-    instance: PipelineEvaluationInstance,
-) -> Dict[Uid, NDArray]:
-    embeddings = dict()
-
-    for uid in tqdm(sorted(uids)):
-        model_file = Path(lvis.uid_to_file[uid])
-
-        results_dir = instance.results_dir / model_file.name
-
-        if results_dir.exists() and results_dir.is_dir():
-            avg_embedding = None
-
-            for image_file in results_dir.iterdir():
-                if image_file.is_file() and image_file.name.endswith(".png"):
-                    # CONSOLE.log(f"Embedding selected view {file_link(image_file)}")
-
-                    embedding = embedder.embed_image_numpy(image_file)
-
-                    avg_embedding = embedding if avg_embedding is None else avg_embedding + embedding
-
-            if avg_embedding is not None:
-                avg_embedding /= np.linalg.norm(avg_embedding)
-
-                embeddings[uid] = avg_embedding
-
-                # CONSOLE.log(f"Embedded selected views of {file_link(model_file)}")
-
-    return embeddings
-
-
-def embed_random_views_avg(
-    lvis: LVISDataset,
-    uids: Set[Uid],
-    embedder: Embedder,
-    instance: PipelineEvaluationInstance,
-    rng: Generator,
-    number_of_views: int,
-) -> Dict[Uid, NDArray]:
-    embeddings = dict()
-
-    for uid in tqdm(sorted(uids)):
-        selection_rng = np.random.default_rng(seed=rng)
-
-        model_file = Path(lvis.uid_to_file[uid])
-
-        pipeline_config = instance.create_pipeline_config(model_file)
-
-        views_dir = pipeline_config.get_base_dir() / "renderer" / "images"
-
-        if views_dir.exists() and views_dir.is_dir():
-            available_image_files = [
-                file for file in views_dir.iterdir() if file.is_file() and file.name.endswith(".png")
-            ]
-            random_image_files = []
-
-            for i in range(min(len(available_image_files), number_of_views)):
-                idx = selection_rng.integers(low=0, high=len(available_image_files))
-                random_image_files.append(available_image_files[idx])
-                del available_image_files[idx]
-
-            if len(random_image_files) != number_of_views:
-                CONSOLE.log(
-                    f"[bold yellow]WARNING: Only {len(random_image_files)} views available of {file_link(model_file)} for random selection of {number_of_views} views"
-                )
-                continue
-
-            avg_embedding = None
-
-            for image_file in random_image_files:
-                # CONSOLE.log(f"Embedding random view {file_link(image_file)}")
-
-                embedding = embedder.embed_image_numpy(image_file)
-
-                avg_embedding = embedding if avg_embedding is None else avg_embedding + embedding
-
-            if avg_embedding is not None:
-                avg_embedding /= np.linalg.norm(avg_embedding)
-
-                embeddings[uid] = avg_embedding
-
-                # CONSOLE.log(f"Embedded random views of {file_link(model_file)}")
-
-    return embeddings
 
 
 def embed_categories(categories: List[Category], embedder: Embedder) -> Dict[Category, NDArray]:

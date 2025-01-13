@@ -73,17 +73,16 @@ def plot_avg_similarities_per_category(
 
     fig, ax = plt.subplots()
 
-    ax.set_title("Similarity Between Image and Prompt CLIP Embedding")
+    ax.set_title("Similarity Between CLIP Embedding of Image and Category Text Prompt")
 
     grouped_bar_plot(
         ax,
         groups=rename_categories_tuple(categories, category_names),
         values=convert_nested_maps_to_tuples(avg_similarities, categories),
-        xlabel="Prompts for Objaverse 1.0 LVIS Categories\n(size of categories in parentheses not part of prompt)",
+        xlabel="Objaverse 1.0 LVIS Category\n(size of category in parentheses)",
         ylabel="Average Embedding Cosine-Similarity",
     )
 
-    ax.set_xticks(ax.get_xticks(), ax.get_xticklabels(), rotation=45, ha="right")
     ax.set_ylim(ymin=0.0, ymax=1.0)
 
     fig.tight_layout()

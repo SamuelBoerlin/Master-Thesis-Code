@@ -1,20 +1,20 @@
-from typing import Any, Dict, List, Set, Tuple, TypeVar
+from typing import Dict, List, Set, Tuple, TypeVar
 
 K1 = TypeVar("K1")
 K2 = TypeVar("K2")
 V = TypeVar("V")
 
 
+def convert_map_to_tuple(map: Dict[K1, V], key_order: List[K1]) -> Tuple[V, ...]:
+    values: List[V] = []
+    for order_key in key_order:
+        if order_key in map:
+            values.append(map[order_key])
+    return tuple(values)
+
+
 def convert_nested_maps_to_tuples(map: Dict[K1, Dict[K2, V]], key_order: List[K2]) -> Dict[K1, Tuple[V, ...]]:
-    ret: Dict[K1, Tuple[V, ...]] = dict()
-    for key in map:
-        d = map[key]
-        values: List[V] = []
-        for order_key in key_order:
-            if order_key in d:
-                values.append(d[order_key])
-        ret[key] = tuple(values)
-    return ret
+    return {key: convert_map_to_tuple(map[key], key_order) for key in map.keys()}
 
 
 def get_keys_of_nested_maps(map: Dict[K1, Dict[K2, V]]) -> Set[K2]:

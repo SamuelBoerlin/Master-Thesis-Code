@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, Dict, NewType, Tuple
+from typing import Callable, Dict, NewType, Tuple, Union
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -24,15 +24,68 @@ def render_figure(fig: plt.Figure, callback: Callable[[im.Image], None]) -> None
 
 def save_figure(fig: plt.Figure, file: Path) -> None:
     def save(image: im.Image) -> None:
+        file.parent.mkdir(parents=True, exist_ok=True)
         image.save(file)
 
     render_figure(fig, save)
 
 
+def bar_plot(
+    ax: plt.Axes,
+    names: Tuple[str, ...],
+    values: Union[Tuple[float, ...], NDArray],
+    xlabel: str = None,
+    ylabel: str = None,
+) -> None:
+    ax.bar(names, values)
+
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
+
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+
+    ax.set_xticks(ax.get_xticks(), ax.get_xticklabels(), rotation=45, ha="right")
+
+
+def histogram_plot(
+    ax: plt.Axes,
+    buckets: Tuple[str, ...],
+    values: Union[Tuple[float, ...], NDArray],
+    xlabel: str = None,
+    ylabel: str = None,
+) -> None:
+    ax.bar(buckets, values)
+
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
+
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+
+
+def discrete_histogram_plot(
+    ax: plt.Axes,
+    values: NDArray,
+    xlabel: str = None,
+    ylabel: str = None,
+    trim: bool = True,
+) -> None:
+    start = 0
+
+    if trim:
+        start = (values > 0).argmax()
+        values = np.trim_zeros(values)
+
+    buckets = tuple([str(nr) for nr in range(start, start + len(values))])
+
+    histogram_plot(ax, buckets, values, xlabel=xlabel, ylabel=ylabel)
+
+
 def grouped_bar_plot(
     ax: plt.Axes,
     groups: Tuple[str, ...],
-    values: Dict[Label, Tuple[float, ...]],
+    values: Dict[Label, Union[Tuple[float, ...], NDArray]],
     bar_width=0.2,
     xlabel: str = None,
     ylabel: str = None,
@@ -53,6 +106,8 @@ def grouped_bar_plot(
         ax.set_ylabel(ylabel)
 
     ax.legend(ys.keys())
+
+    ax.set_xticks(ax.get_xticks(), ax.get_xticklabels(), rotation=45, ha="right")
 
 
 def precision_recall_plot(
