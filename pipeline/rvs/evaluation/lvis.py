@@ -1,31 +1,34 @@
 import hashlib
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, NewType, Optional, Set
 
 from nerfstudio.utils.rich_utils import CONSOLE
 from objaverse import load_lvis_annotations, load_objects
 
 from rvs.utils.console import file_link
 
+Uid = NewType("Uid", str)
+Category = NewType("Category", str)
+
 
 class LVISDataset:
     # Cache relevant settings
-    categories: Optional[Set[str]]
-    uids: Optional[Set[str]]
+    categories: Optional[Set[Category]]
+    uids: Optional[Set[Uid]]
     per_category_limit: Optional[int]
 
     # Cache irrelevant settings
     download_processes: int
 
     # Dataset
-    dataset: Dict[str, List[str]] = dict()
+    dataset: Dict[Category, List[Uid]] = dict()
     """Mapping of LVIS category to list of objaverse 1.0 uids"""
 
-    uid_to_file: Dict[str, str] = dict()
+    uid_to_file: Dict[Uid, str] = dict()
     """Mapping of LVIS objaverse 1.0 uid to local file path"""
 
-    uid_to_category: Dict[str, str] = dict()
+    uid_to_category: Dict[Uid, Category] = dict()
     """Mapping of LVIS objaverse 1.0 uid to LVIS category"""
 
     @property

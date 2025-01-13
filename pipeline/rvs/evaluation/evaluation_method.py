@@ -1,24 +1,19 @@
 from pathlib import Path
-from typing import Any, Dict, List, NewType, Optional, Set, Tuple
+from typing import Dict, List, Set
 
 import numpy as np
-from matplotlib import pyplot as plt
 from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.random import Generator
 from numpy.typing import NDArray
 from tqdm import tqdm
 
+from rvs.evaluation.analysis.precision_recall import calculate_precision_recall, plot_precision_recall
+from rvs.evaluation.analysis.similarity import calculate_similarity_to_ground_truth, plot_avg_similarities_per_category
+from rvs.evaluation.analysis.utils import count_category_items
 from rvs.evaluation.embedder import Embedder
-from rvs.evaluation.lvis import LVISDataset
+from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.utils.console import file_link
-from rvs.utils.map import convert_nested_maps_to_tuples, get_keys_of_nested_maps
-from rvs.utils.plot import grouped_bar_plot, save_figure
-
-# Helper types for distinguishing different strings/map keys
-Category = NewType("Category", str)
-Method = NewType("Method", str)
-Uid = NewType("Uid", str)
 
 
 def evaluate_results(
@@ -31,6 +26,8 @@ def evaluate_results(
     for category in lvis.dataset.keys():
         for uid in lvis.dataset[category]:
             available_uids.add(uid)
+
+    number_of_views = 3  # FIXME: This should come from the config
 
     CONSOLE.rule("Embedding selected views...")
     avg_selected_views_embeddings = embed_selected_views_avg(
@@ -48,7 +45,7 @@ def evaluate_results(
         embedder,
         instance,
         np.random.default_rng(seed=238947978),
-        3,  # FIXME: This should come from the config
+        number_of_views,
     )
     available_uids = avg_selected_views_embeddings.keys()
 
@@ -56,10 +53,20 @@ def evaluate_results(
     similarities = calculate_similarity_to_ground_truth(
         lvis,
         {
-            "Method 1: Average Embedding of Selected Views": avg_selected_views_embeddings,
-            "Method 2: Average Embedding of Random Views": avg_random_views_embeddings,
+            f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
+            f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
         },
         categories_embeddings,
+    )
+
+    CONSOLE.rule("Calculate precision/recall...")
+    precision_recall = calculate_precision_recall(
+        {
+            f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
+            f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
+        },
+        categories_embeddings,
+        lvis.uid_to_category,
     )
 
     CONSOLE.rule("Create results...")
@@ -69,19 +76,15 @@ def evaluate_results(
         similarities,
         output_dir / "similarities.png",
         category_names={
-            category: category + " (" + str(count_category_items(lvis, category, available_uids)) + ")"
+            category: category + " (" + str(count_category_items(lvis.uid_to_category, available_uids, category)) + ")"
             for category in lvis.categories
         },
     )
 
     for category in categories_embeddings.keys():
-        plot_retrieval_precision_recall(
-            lvis,
-            {
-                "Method 1: Average Embedding of Selected Views": avg_selected_views_embeddings,
-                "Method 2: Average Embedding of Random Views": avg_random_views_embeddings,
-            },
-            categories_embeddings,
+        plot_precision_recall(
+            precision_recall,
+            len(available_uids),
             output_dir / f"precision_recall_{category}.png",
             category_filter={category},
         )
@@ -189,227 +192,3 @@ def embed_categories(categories: List[Category], embedder: Embedder) -> Dict[Cat
 
 def category_name_to_embedding_prompt(category: Category) -> None:
     return category.replace("_", " ")
-
-
-def get_categories_of_uids(lvis: LVISDataset, uids: List[Uid]) -> Set[Uid]:
-    categories = set()
-    for uid in uids:
-        categories.add(lvis.uid_to_category[uid])
-    return categories
-
-
-def get_categories_tuple(lvis: LVISDataset, map: Dict[Method, Dict[Uid, Any]]) -> Tuple[Category, ...]:
-    return tuple(sorted(list(get_categories_of_uids(lvis, get_keys_of_nested_maps(map)))))
-
-
-def rename_categories_tuple(
-    categories: Tuple[Category, ...],
-    category_names: Optional[Dict[Category, str]],
-) -> Tuple[Category, ...]:
-    return tuple([category_names[category] if category in category_names else category for category in categories])
-
-
-def calculate_similarity_to_ground_truth(
-    lvis: LVISDataset,
-    embeddings: Dict[Method, Dict[Uid, NDArray]],
-    ground_truth: Dict[Category, NDArray],
-) -> Dict[Method, Dict[Uid, float]]:
-    similarities: Dict[Method, Dict[Uid, float]] = dict()
-
-    for method in embeddings.keys():
-        method_embeddings = embeddings[method]
-
-        method_similarities: Dict[Uid, float] = dict()
-
-        for uid in method_embeddings.keys():
-            category = lvis.uid_to_category[uid]
-
-            method_embedding = method_embeddings[uid]
-            ground_truth_embedding = ground_truth[category]
-
-            method_similarities[uid] = np.dot(ground_truth_embedding, method_embedding)
-
-        similarities[method] = method_similarities
-
-    return similarities
-
-
-def count_category_items(lvis: LVISDataset, category: Category, uids: List[Uid]) -> int:
-    count = 0
-    for uid in uids:
-        item_category = lvis.uid_to_category[uid]
-        if item_category == category:
-            count += 1
-    return count
-
-
-def plot_avg_similarities_per_category(
-    lvis: LVISDataset,
-    similarities: Dict[Method, Dict[Uid, float]],
-    file: Path,
-    category_names: Optional[Dict[Category, str]] = None,
-) -> None:
-    categories = get_categories_tuple(lvis, similarities)
-
-    avg_similarities: Dict[Method, Dict[Category, float]] = dict()
-
-    for method in similarities.keys():
-        method_similarities = similarities[method]
-
-        method_avg_similarities: Dict[Category, float] = {category: 0.0 for category in categories}
-        method_avg_counts: Dict[Category, int] = {category: 0 for category in categories}
-
-        for uid in method_similarities.keys():
-            similarity = method_similarities[uid]
-
-            category = lvis.uid_to_category[uid]
-
-            method_avg_similarities[category] += similarity
-            method_avg_counts[category] += 1
-
-        for category in method_avg_similarities:
-            count = method_avg_counts[category]
-            if count > 0:
-                method_avg_similarities[category] /= count
-
-        avg_similarities[method] = method_avg_similarities
-
-    fig, ax = plt.subplots()
-
-    ax.set_title("Similarity Between Image and Prompt CLIP Embedding")
-
-    grouped_bar_plot(
-        ax,
-        groups=rename_categories_tuple(categories, category_names),
-        values=convert_nested_maps_to_tuples(avg_similarities, categories),
-        xlabel="Prompts for Objaverse 1.0 LVIS Categories (size of categories in parentheses not part of prompt)",
-        ylabel="Average Embedding Cosine-Similarity",
-    )
-
-    ax.set_xticks(ax.get_xticks(), ax.get_xticklabels(), rotation=45, ha="right")
-    ax.set_ylim(ymin=0.0, ymax=1.0)
-
-    fig.tight_layout()
-
-    save_figure(fig, file)
-
-
-def calculate_similarity_to_category(
-    embeddings: Dict[Method, Dict[Uid, NDArray]],
-    categories_embeddings: Dict[Category, NDArray],
-) -> Dict[Method, Dict[Uid, Dict[Category, float]]]:
-    similarities: Dict[Method, Dict[Uid, Dict[Category, float]]] = dict()
-
-    for method in embeddings.keys():
-        method_embeddings = embeddings[method]
-
-        method_similarities: Dict[Uid, Dict[Category, float]] = dict()
-
-        for uid in method_embeddings.keys():
-            embedding = method_embeddings[uid]
-
-            item_similarities: Dict[Category, float] = dict()
-
-            for category, category_embedding in categories_embeddings.items():
-                item_similarities[category] = np.dot(embedding, category_embedding)
-
-            method_similarities[uid] = item_similarities
-
-        similarities[method] = method_similarities
-
-    return similarities
-
-
-def plot_retrieval_precision_recall(
-    lvis: LVISDataset,
-    embeddings: Dict[Method, Dict[Uid, NDArray]],
-    categories_embeddings: Dict[Category, NDArray],
-    file: Path,
-    category_names: Optional[Dict[Category, str]] = None,
-    category_filter: Optional[Set[str]] = None,
-) -> None:
-    if category_filter is not None:
-        categories_embeddings = {
-            category: categories_embeddings[category]
-            for category in categories_embeddings.keys()
-            if category in category_filter
-        }
-
-    ground_truth = lvis.uid_to_category
-
-    uids = get_keys_of_nested_maps(embeddings)
-
-    scores = calculate_similarity_to_category(embeddings, categories_embeddings)
-
-    fig = plt.figure()
-
-    for category in categories_embeddings.keys():
-        category_name = category_names[category] if category_names is not None else category
-        category_size = count_category_items(lvis, category, uids)
-
-        ax = fig.subplots()
-
-        ax.set_title(
-            f'Precision Recall Curve for Objaverse 1.0 LVIS Category\n"{category_name}"\n(Relevant: {category_size}, Total: {len(uids)})'
-        )
-
-        for method in embeddings.keys():
-            method_scores = scores[method]
-
-            # UIDs ranked by scores in descending order
-            ranking = sorted(list(method_scores.keys()), key=lambda uid: method_scores[uid][category], reverse=True)
-
-            true_positives = np.array([1 if ground_truth[uid] == category else 0 for uid in ranking])
-            true_positives_cumsum = np.cumsum(true_positives)
-
-            # True Positives / Total Relevant
-            recall = true_positives_cumsum * 1.0 / category_size
-
-            # True Positives / Total Retrieved
-            precision = true_positives_cumsum * 1.0 / (np.arange(len(ranking)) + 1.0)
-
-            ax.plot(recall, precision, "-o")
-
-        ax.set_xlabel("Recall")
-        ax.set_xlim(xmin=0.0, xmax=1.0)
-
-        ax.set_ylabel("Precision")
-        ax.set_ylim(ymin=0.0, ymax=1.0)
-
-        ax.legend(embeddings.keys())
-
-    fig.tight_layout()
-
-    save_figure(fig, file)
-
-
-def classify(embedding: NDArray, class_embeddings: Dict[Category, NDArray]) -> Category:
-    assert len(class_embeddings) > 0
-    best_similarity = -1.0
-    best_class: Category = None
-    for query, query_embedding in class_embeddings:
-        similarity = np.dot(embedding, query_embedding)
-        if similarity > best_similarity:
-            best_similarity = similarity
-            best_class = query
-    assert best_class is not None
-    return best_class
-
-
-def classify_all(
-    embeddings: Dict[Method, Dict[Uid, NDArray]],
-    class_embeddings: Dict[Category, NDArray],
-) -> Dict[Method, Dict[Uid, Category]]:
-    predictions: Dict[Method, Dict[Uid, Category]] = dict()
-
-    for method in embeddings.keys():
-        method_embeddings = embeddings[method]
-
-        method_predictions: Dict[Uid, Category] = dict()
-
-        for uid in method_embeddings.keys():
-            method_predictions[uid] = classify(method_embeddings[uid], class_embeddings)
-
-        predictions[method] = method_predictions
-
-    return predictions

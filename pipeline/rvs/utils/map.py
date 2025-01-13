@@ -23,3 +23,10 @@ def get_keys_of_nested_maps(map: Dict[K1, Dict[K2, V]]) -> Set[K2]:
         for uid in map[key]:
             uids.add(uid)
     return uids
+
+
+def extract_nested_maps(map: Dict[K1, Dict[K2, V]], key: K2) -> Dict[K1, V]:
+    ret: Dict[K1, V] = dict()
+    for k, inner in map.items():
+        ret[k] = inner[key]
+    return ret

@@ -1,10 +1,15 @@
 from pathlib import Path
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, NewType, Tuple
 
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from numpy.typing import NDArray
 from PIL import Image as im
+
+Precision = NewType("Precision", NDArray)
+Recall = NewType("Recall", NDArray)
+Label = NewType("Label", str)
 
 
 def render_figure(fig: plt.Figure, callback: Callable[[im.Image], None]) -> None:
@@ -27,7 +32,7 @@ def save_figure(fig: plt.Figure, file: Path) -> None:
 def grouped_bar_plot(
     ax: plt.Axes,
     groups: Tuple[str, ...],
-    values: Dict[str, Tuple[float, ...]],
+    values: Dict[Label, Tuple[float, ...]],
     bar_width=0.2,
     xlabel: str = None,
     ylabel: str = None,
@@ -46,4 +51,27 @@ def grouped_bar_plot(
 
     if ylabel is not None:
         ax.set_ylabel(ylabel)
+
     ax.legend(ys.keys())
+
+
+def precision_recall_plot(
+    ax: plt.Axes,
+    values: Dict[Label, Tuple[Precision, Recall]],
+    xlabel: str = None,
+    ylabel: str = None,
+) -> None:
+    for label in values.keys():
+        ys, xs, *_ = values[label]
+
+        ax.plot(xs, ys, "-o")
+
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
+    ax.set_xlim(xmin=0.0, xmax=1.0)
+
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    ax.set_ylim(ymin=0.0, ymax=1.0)
+
+    ax.legend(values.keys())
