@@ -89,6 +89,7 @@ def grouped_bar_plot(
     bar_width=0.2,
     xlabel: str = None,
     ylabel: str = None,
+    legend_loc: Union[str, int] = None,
 ) -> None:
     xs = np.arange(len(groups))
     ys = values
@@ -105,7 +106,7 @@ def grouped_bar_plot(
     if ylabel is not None:
         ax.set_ylabel(ylabel)
 
-    ax.legend(ys.keys())
+    ax.legend(ys.keys(), loc=legend_loc)
 
     ax.set_xticks(ax.get_xticks(), ax.get_xticklabels(), rotation=45, ha="right")
 
@@ -115,6 +116,7 @@ def precision_recall_plot(
     values: Dict[Label, Tuple[Precision, Recall]],
     xlabel: str = None,
     ylabel: str = None,
+    legend_loc: Union[str, int] = None,
 ) -> None:
     for label in values.keys():
         ys, xs, *_ = values[label]
@@ -129,4 +131,23 @@ def precision_recall_plot(
         ax.set_ylabel(ylabel)
     ax.set_ylim(ymin=0.0, ymax=1.0)
 
-    ax.legend(values.keys())
+    ax.legend(values.keys(), loc=legend_loc)
+
+
+def place_legend_outside(
+    ax: plt.Axes,
+    enlarge_figure: bool = True,
+) -> None:
+    ax.get_legend().set_bbox_to_anchor((1.0, 1.0))
+
+    plt.draw()
+
+    legend_bb = ax.get_legend().get_window_extent()
+
+    fig_bb = ax.figure.get_window_extent()
+    fig_size = ax.figure.get_size_inches()
+
+    unit_to_inches = fig_size[0] / fig_bb.width
+
+    if enlarge_figure:
+        ax.figure.set_size_inches(fig_size[0] + legend_bb.width * unit_to_inches, fig_size[1])

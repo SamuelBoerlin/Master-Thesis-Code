@@ -78,7 +78,7 @@ def plot_avg_similarities_per_category(
     grouped_bar_plot(
         ax,
         groups=rename_categories_tuple(categories, category_names),
-        values=convert_nested_maps_to_tuples(avg_similarities, categories),
+        values=convert_nested_maps_to_tuples(avg_similarities, key_order=categories, default=lambda _: 0.0),
         xlabel="Objaverse 1.0 LVIS Category\n(size of category in parentheses)",
         ylabel="Average Embedding Cosine-Similarity",
     )

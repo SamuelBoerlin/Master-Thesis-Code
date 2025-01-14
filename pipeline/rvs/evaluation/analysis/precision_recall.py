@@ -5,10 +5,10 @@ import numpy as np
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
-from rvs.evaluation.analysis.utils import Method, count_category_items
+from rvs.evaluation.analysis.utils import Method, count_category_items, rename_categories_tuple
 from rvs.evaluation.lvis import Category, Uid
-from rvs.utils.map import extract_nested_maps, get_keys_of_nested_maps
-from rvs.utils.plot import Precision, Recall, precision_recall_plot, save_figure
+from rvs.utils.map import convert_nested_maps_to_tuples, extract_nested_maps, get_keys_of_nested_maps
+from rvs.utils.plot import Precision, Recall, grouped_bar_plot, place_legend_outside, precision_recall_plot, save_figure
 
 
 def calculate_similarity_to_category(
@@ -70,6 +70,9 @@ def calculate_precision_recall(
         for category in categories_embeddings.keys():
             category_size = category_sizes[category]
 
+            if category_size <= 0:
+                continue
+
             # UIDs ranked by scores in descending order
             ranking = sorted(list(method_scores.keys()), key=lambda uid: method_scores[uid][category], reverse=True)
 
@@ -87,6 +90,44 @@ def calculate_precision_recall(
         results[method] = method_pr
 
     return results
+
+
+def calculate_precision_recall_auc(
+    precision_recall: Dict[Method, Dict[Category, Tuple[Precision, Recall, int]]],
+) -> Dict[Method, Dict[Category, float]]:
+    auc: Dict[Method, Dict[Category, float]] = dict()
+
+    for method, method_pr in precision_recall.items():
+        method_auc: Dict[Category, float] = dict()
+
+        for category, pr in method_pr.items():
+            precision, recall, _ = pr
+
+            total_area = 0.0
+
+            if precision.shape[0] >= 2:
+                start_precision = np.clip(precision[0], 0.0, 1.0)
+                start_recall = np.clip(recall[0], 0.0, 1.0)
+
+                for i in range(1, precision.shape[0]):
+                    end_precision = np.clip(precision[i], 0.0, 1.0)
+                    end_recall = np.clip(recall[i], 0.0, 1.0)
+
+                    dx = np.clip(end_recall - start_recall, 0.0, 1.0)
+
+                    min_y = min(start_precision, end_precision)
+                    max_y = max(start_precision, end_precision)
+
+                    total_area += dx * min_y + 0.5 * dx * (max_y - min_y)
+
+                    start_precision = end_precision
+                    start_recall = end_recall
+
+            method_auc[category] = total_area
+
+        auc[method] = method_auc
+
+    return auc
 
 
 def plot_precision_recall(
@@ -119,6 +160,44 @@ def plot_precision_recall(
             xlabel="Recall",
             ylabel="Precision",
         )
+
+    fig.tight_layout()
+
+    save_figure(fig, file)
+
+
+def plot_precision_recall_auc(
+    precision_recall_auc: Dict[Method, Dict[Category, float]],
+    file: Path,
+    category_names: Optional[Dict[Category, str]] = None,
+    category_filter: Optional[Set[str]] = None,
+) -> None:
+    categories = tuple(
+        sorted(
+            [
+                category
+                for category in get_keys_of_nested_maps(precision_recall_auc)
+                if category_filter is None or category in category_filter
+            ]
+        )
+    )
+
+    fig, ax = plt.subplots()
+
+    ax.set_title("Area Under the Precision Recall Curve")
+
+    grouped_bar_plot(
+        ax,
+        groups=rename_categories_tuple(categories, category_names),
+        values=convert_nested_maps_to_tuples(precision_recall_auc, key_order=categories, default=lambda _: 0.0),
+        xlabel="Objaverse 1.0 LVIS Category\n(size of category in parentheses)",
+        ylabel="PR AUC",
+        legend_loc="upper left",
+    )
+
+    place_legend_outside(ax)
+
+    ax.set_ylim(ymin=0.0, ymax=1.0)
 
     fig.tight_layout()
 

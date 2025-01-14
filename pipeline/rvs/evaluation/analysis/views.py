@@ -124,7 +124,7 @@ def plot_selected_views_avg_per_category(
     bar_plot(
         ax,
         names=rename_categories_tuple(categories, category_names),
-        values=convert_map_to_tuple(avg_counts, key_order=categories),
+        values=convert_map_to_tuple(avg_counts, key_order=categories, default=lambda _: 0.0),
         xlabel="Objaverse 1.0 LVIS Category\n(size of category in parentheses)",
         ylabel="Average Number of Selected Views",
     )

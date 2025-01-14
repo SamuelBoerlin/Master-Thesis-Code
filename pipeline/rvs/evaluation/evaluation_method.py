@@ -6,7 +6,12 @@ from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.typing import NDArray
 from tqdm import tqdm
 
-from rvs.evaluation.analysis.precision_recall import calculate_precision_recall, plot_precision_recall
+from rvs.evaluation.analysis.precision_recall import (
+    calculate_precision_recall,
+    calculate_precision_recall_auc,
+    plot_precision_recall,
+    plot_precision_recall_auc,
+)
 from rvs.evaluation.analysis.similarity import calculate_similarity_to_ground_truth, plot_avg_similarities_per_category
 from rvs.evaluation.analysis.utils import count_category_items
 from rvs.evaluation.analysis.views import (
@@ -78,16 +83,19 @@ def evaluate_results(
         categories_embeddings,
         lvis.uid_to_category,
     )
+    precision_recall_auc = calculate_precision_recall_auc(precision_recall)
 
     CONSOLE.rule("Create results...")
+
+    category_names_with_sizes = {
+        category: category + " (" + str(count_category_items(lvis.uid_to_category, available_uids, category)) + ")"
+        for category in lvis.categories
+    }
 
     plot_selected_views_avg_per_category(
         avg_number_of_views_per_category,
         output_dir / "nr_of_views_avg.png",
-        category_names={
-            category: category + " (" + str(count_category_items(lvis.uid_to_category, available_uids, category)) + ")"
-            for category in lvis.categories
-        },
+        category_names=category_names_with_sizes,
     )
 
     for category in categories_embeddings.keys():
@@ -101,10 +109,7 @@ def evaluate_results(
         lvis,
         similarities,
         output_dir / "similarities.png",
-        category_names={
-            category: category + " (" + str(count_category_items(lvis.uid_to_category, available_uids, category)) + ")"
-            for category in lvis.categories
-        },
+        category_names=category_names_with_sizes,
     )
 
     for category in categories_embeddings.keys():
@@ -114,6 +119,12 @@ def evaluate_results(
             output_dir / "precision_recall" / f"{category}.png",
             category_filter={category},
         )
+
+    plot_precision_recall_auc(
+        precision_recall_auc,
+        output_dir / "precision_recall_auc.png",
+        category_names=category_names_with_sizes,
+    )
 
 
 def embed_categories(categories: List[Category], embedder: Embedder) -> Dict[Category, NDArray]:
