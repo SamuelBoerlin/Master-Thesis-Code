@@ -36,11 +36,16 @@ class PipelineEvaluationInstance:
         self.pipeline_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self, file: Path, stages: Optional[List[Pipeline.Stage]] = None) -> None:
-        pipeline = PipelineEvaluationInstance.load_pipeline(self.config, self.pipeline_dir, file, stages)
+        pipeline = PipelineEvaluationInstance.create_pipeline(self.config, self.pipeline_dir, file, stages)
+
+        assert pipeline.config.output_dir == self.get_pipeline_dir(file)
 
         results = pipeline.run()
 
-        PipelineEvaluationInstance.save_results(results, self.results_dir, file)
+        index_file = PipelineEvaluationInstance.save_results(results, self.results_dir, file)
+        if index_file is not None:
+            assert index_file == self.get_index_file(file)
+            assert index_file.parent == self.get_results_dir(file)
 
         # Clear memory for next run
         del pipeline
@@ -48,7 +53,7 @@ class PipelineEvaluationInstance:
         torch.cuda.empty_cache()
 
     @staticmethod
-    def save_results(results: Pipeline.State, output_dir: Path, file: Path) -> None:
+    def save_results(results: Pipeline.State, output_dir: Path, file: Path) -> Optional[Path]:
         output_dir = output_dir / file.name
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -86,10 +91,22 @@ class PipelineEvaluationInstance:
 
                 transforms.append(transforms_json_path)
 
-            save_index(output_dir / INDEX_FILE_NAME, images, transforms)
+            index_file = output_dir / INDEX_FILE_NAME
+
+            save_index(index_file, images, transforms)
+
+            return index_file
+
+        return None
+
+    def get_pipeline_dir(self, file: Path) -> Path:
+        return self.pipeline_dir / file.name
+
+    def get_results_dir(self, file: Path) -> Path:
+        return self.results_dir / file.name
 
     def get_index_file(self, file: Path) -> Path:
-        return self.results_dir / file.name / INDEX_FILE_NAME
+        return self.get_results_dir(file) / INDEX_FILE_NAME
 
     def create_pipeline_config(self, file: Path, stages: Optional[List[Pipeline.Stage]] = None) -> PipelineConfig:
         return PipelineEvaluationInstance.configure_pipeline(self.config, self.pipeline_dir, file, stages)
@@ -108,7 +125,7 @@ class PipelineEvaluationInstance:
         return config
 
     @staticmethod
-    def load_pipeline(
+    def create_pipeline(
         config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[Pipeline.Stage]]
     ) -> Pipeline:
         pipeline: Pipeline = PipelineEvaluationInstance.configure_pipeline(config, output_dir, file, stages).setup(

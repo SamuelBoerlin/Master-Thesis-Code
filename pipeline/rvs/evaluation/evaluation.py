@@ -200,7 +200,7 @@ class Evaluation:
         stages: Optional[List[Pipeline.Stage]],
         handle_errors: bool = True,
     ) -> bool:
-        pipeline_str = f"[{', '.join([stage.name for stage in stages])}]"
+        pipeline_str = f'"{self.__safe_resolve(file)}" -> [{", ".join([stage.name for stage in stages])}] -> "{self.__safe_resolve(instance.get_pipeline_dir(file))}" -> "{self.__safe_resolve(instance.get_results_dir(file))}"'
 
         skip = False
 
@@ -211,16 +211,14 @@ class Evaluation:
                     load_index(index_file, validate=True)
                     skip = True  # If index exists and is valid then pipeline has finished
             except Exception:
-                self.logger.warning(
-                    'Index of pipeline %s for file "%s" is invalid\n%s', pipeline_str, file, traceback.format_exc()
-                )
+                self.logger.warning("Index of pipeline %s is invalid:\n%s", pipeline_str, traceback.format_exc())
 
         if skip:
-            self.logger.info('Skipping pipeline %s for file "%s"', pipeline_str, file)
+            self.logger.info("Skipping pipeline %s", pipeline_str)
             return False
 
         with ProcessResult() as result:
-            self.logger.info('Starting pipeline %s for file "%s"', pipeline_str, file)
+            self.logger.info("Starting pipeline %s", pipeline_str)
 
             process: Process = None
             try:
@@ -249,15 +247,19 @@ class Evaluation:
                     pass
 
                 if result.success:
-                    self.logger.info('Finished pipeline %s for file "%s"', pipeline_str, file)
+                    self.logger.info("Finished pipeline %s", pipeline_str)
                 elif result.msg is not None:
-                    self.logger.error(
-                        'Failed pipeline %s for file "%s" due to exception:\n%s', pipeline_str, file, result.msg
-                    )
+                    self.logger.error("Failed pipeline %s due to exception:\n%s", pipeline_str, result.msg)
                 else:
-                    self.logger.error('Failed pipeline %s for file "%s" due to unknown reason', pipeline_str, file)
+                    self.logger.error("Failed pipeline %s due to unknown reason", pipeline_str)
 
             return result.success
+
+    def __safe_resolve(self, file: Path) -> str:
+        try:
+            return str(file.resolve())
+        except Exception:
+            return str(file)
 
     def __configure_pipeline(self, config: PipelineConfig) -> PipelineConfig:
         config = replace(self.config.pipeline)

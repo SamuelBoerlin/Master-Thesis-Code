@@ -63,6 +63,8 @@ def histogram_plot(
     if ylabel is not None:
         ax.set_ylabel(ylabel)
 
+    ax.yaxis.get_major_locator().set_params(integer=True)
+
 
 def discrete_histogram_plot(
     ax: plt.Axes,

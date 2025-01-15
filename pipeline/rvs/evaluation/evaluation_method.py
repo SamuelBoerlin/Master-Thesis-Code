@@ -6,6 +6,12 @@ from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.typing import NDArray
 from tqdm import tqdm
 
+from rvs.evaluation.analysis.clusters import (
+    calculate_clusters_avg_per_category,
+    calculte_clusters_histogram_per_category,
+    plot_clusters_avg_per_category,
+    plot_clusters_histogram,
+)
 from rvs.evaluation.analysis.precision_recall import (
     calculate_precision_recall,
     calculate_precision_recall_auc,
@@ -60,6 +66,10 @@ def evaluate_results(
     )
     available_uids = avg_selected_views_embeddings.keys()
 
+    CONSOLE.rule("Calculate number of clusters...")
+    avg_number_of_clusters_per_category = calculate_clusters_avg_per_category(lvis, available_uids, instance)
+    histogram_of_clusters_per_category = calculte_clusters_histogram_per_category(lvis, available_uids, instance)
+
     CONSOLE.rule("Calculate number of selected views...")
     avg_number_of_views_per_category = calculate_selected_views_avg_per_category(lvis, available_uids, instance)
     histogram_of_views_per_category = calculte_selected_views_histogram_per_category(lvis, available_uids, instance)
@@ -91,6 +101,19 @@ def evaluate_results(
         category: category + " (" + str(count_category_items(lvis.uid_to_category, available_uids, category)) + ")"
         for category in lvis.categories
     }
+
+    plot_clusters_avg_per_category(
+        avg_number_of_clusters_per_category,
+        output_dir / "nr_of_clusters_avg.png",
+        category_names=category_names_with_sizes,
+    )
+
+    for category in categories_embeddings.keys():
+        plot_clusters_histogram(
+            histogram_of_clusters_per_category,
+            output_dir / "nr_of_clusters_histogram" / f"{category}.png",
+            category_filter={category},
+        )
 
     plot_selected_views_avg_per_category(
         avg_number_of_views_per_category,
