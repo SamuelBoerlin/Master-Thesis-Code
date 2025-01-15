@@ -6,9 +6,12 @@ from typing import List, Optional
 
 import torch
 
+from rvs.evaluation.index import save_index
 from rvs.pipeline.pipeline import Pipeline, PipelineConfig
 from rvs.scripts.rvs import _set_random_seed
 from rvs.utils.nerfstudio import create_transforms_json, get_frame_name
+
+INDEX_FILE_NAME = "index.json"
 
 
 class PipelineEvaluationInstance:
@@ -50,13 +53,22 @@ class PipelineEvaluationInstance:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         if results.selected_views is not None:
+            # Save selected views and index once pipeline is fully done
+
+            images: List[Path] = []
+            transforms: List[Path] = []
+
             for view in results.selected_views:
                 if view.path is None:
                     raise ValueError(f"View {view.index + 1} is missing path (hasn't been saved to a file?)")
 
                 frame_name = get_frame_name(view)
 
-                shutil.copyfile(view.path, output_dir / frame_name)
+                image_path = output_dir / frame_name
+
+                shutil.copyfile(view.path, image_path)
+
+                images.append(image_path)
 
                 transforms_json_path = output_dir / (frame_name + ".transforms.json")
                 transforms_json = create_transforms_json(
@@ -71,6 +83,13 @@ class PipelineEvaluationInstance:
 
                 with transforms_json_path.open("w") as f:
                     f.write(transforms_json)
+
+                transforms.append(transforms_json_path)
+
+            save_index(output_dir / INDEX_FILE_NAME, images, transforms)
+
+    def get_index_file(self, file: Path) -> Path:
+        return self.results_dir / file.name / INDEX_FILE_NAME
 
     def create_pipeline_config(self, file: Path, stages: Optional[List[Pipeline.Stage]] = None) -> PipelineConfig:
         return PipelineEvaluationInstance.configure_pipeline(self.config, self.pipeline_dir, file, stages)

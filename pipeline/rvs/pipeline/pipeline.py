@@ -109,6 +109,8 @@ class Pipeline:
     __renderer_output_dir: Path
     __sampler_output_dir: Path
     __field_output_dir: Path
+    __embedding_output_dir: Path
+    __clustering_output_dir: Path
 
     def __init__(self, config: PipelineConfig, **kwargs) -> None:
         self.config = config
@@ -134,7 +136,13 @@ class Pipeline:
 
         self.sampler = self.config.sampler.setup()
 
+        self.__embedding_output_dir = output_dir / "embedding"
+        self.__embedding_output_dir.mkdir(parents=True, exist_ok=True)
+
         self.clustering = self.config.clustering.setup()
+
+        self.__clustering_output_dir = output_dir / "clustering"
+        self.__clustering_output_dir.mkdir(parents=True, exist_ok=True)
 
         self.selection = self.config.selection.setup()
 
@@ -195,11 +203,15 @@ class Pipeline:
         if self.should_run_stage(Pipeline.Stage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Sampling embeddings...")
             pipeline_state.sample_embeddings = self.field.sample(pipeline_state.sample_positions)
-        # TODO Implement loading data
+            self.__save_sample_embeddings(pipeline_state)
+        elif self.should_load_stage(Pipeline.Stage.SAMPLE_EMBEDDINGS):
+            CONSOLE.log("Loading embeddings...")
+            self.__load_sample_embeddings(pipeline_state)
 
         if self.should_run_stage(Pipeline.Stage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Clustering embeddings...")
             pipeline_state.sample_clusters = self.clustering.cluster(pipeline_state.sample_embeddings)
+            self.__save_clusters(pipeline_state)
 
             if self.config.render_sample_clusters_of_views is not None:
                 for i in self.config.render_sample_clusters_of_views:
@@ -219,7 +231,9 @@ class Pipeline:
                         ),
                         hard_assignments=self.config.render_sample_clusters_hard_assignment,
                     )
-        # TODO Implement loading data
+        elif self.should_load_stage(Pipeline.Stage.CLUSTER_EMBEDDINGS):
+            CONSOLE.log("Loading clusters...")
+            self.__load_clusters(pipeline_state)
 
         if self.should_run_stage(Pipeline.Stage.SELECT_VIEWS):
             CONSOLE.log("Selecting views...")
@@ -306,6 +320,40 @@ class Pipeline:
             return path
         except Exception as ex:
             CONSOLE.log("Failed loading positions:")
+            raise ex
+
+    def __save_sample_embeddings(self, state: "Pipeline.State") -> Path:
+        path = self.__embedding_output_dir / "embeddings.json"
+        with path.open("w") as f:
+            json.dump(state.sample_embeddings.tolist(), f)
+        CONSOLE.log(f"Saved embeddings to {file_link(path)}")
+
+    def __load_sample_embeddings(self, state: "Pipeline.State") -> Path:
+        path = self.__embedding_output_dir / "embeddings.json"
+        try:
+            with path.open("r") as f:
+                state.sample_embeddings = np.array(json.load(f))
+            CONSOLE.log(f"Loaded embeddings from {file_link(path)}")
+            return path
+        except Exception as ex:
+            CONSOLE.log("Failed loading embeddings:")
+            raise ex
+
+    def __save_clusters(self, state: "Pipeline.State") -> Path:
+        path = self.__clustering_output_dir / "clusters.json"
+        with path.open("w") as f:
+            json.dump(state.sample_clusters.tolist(), f)
+        CONSOLE.log(f"Saved clusters to {file_link(path)}")
+
+    def __load_clusters(self, state: "Pipeline.State") -> Path:
+        path = self.__clustering_output_dir / "clusters.json"
+        try:
+            with path.open("r") as f:
+                state.sample_clusters = np.array(json.load(f))
+            CONSOLE.log(f"Loaded clusters from {file_link(path)}")
+            return path
+        except Exception as ex:
+            CONSOLE.log("Failed loading clusters:")
             raise ex
 
     class State:

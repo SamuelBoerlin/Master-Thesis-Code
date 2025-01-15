@@ -141,7 +141,7 @@ class LVISDataset:
             ):
                 self.dataset = cache_json["dataset"]
                 self.uid_to_file = cache_json["uid_to_file"]
-                self.per_category_limit = cache_json["per_category_limit"]
+                self.per_category_limit = cache_json.get("per_category_limit", None)
                 self.__update_uid_to_category_mapping()
 
                 return cache_file

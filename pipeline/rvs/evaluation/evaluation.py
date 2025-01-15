@@ -11,6 +11,7 @@ from torch.multiprocessing import Process
 
 from rvs.evaluation.embedder import Embedder, EmbedderConfig
 from rvs.evaluation.evaluation_method import evaluate_results
+from rvs.evaluation.index import load_index
 from rvs.evaluation.lvis import LVISDataset
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.process import ProcessResult, start_process, stop_process
@@ -52,6 +53,12 @@ class EvaluationConfig(InstantiateConfig):
 
     to_stage: Optional[Pipeline.Stage] = None
     """If configured the pipeline is only run up to this stage and no further"""
+
+    pipeline_run_limit: Optional[int] = None
+    """Maximum number of pipeline runs before it aborts"""
+
+    skip_finished: bool = False
+    """Whether to skip re-running pipelines if final output is already available"""
 
     # FIXME This (or any other further "sub-configs") breaks tyro for some strange reason...
     # embedder: EmbedderConfig = field(defaulut_factory=lambda: EmbedderConfig)
@@ -115,27 +122,36 @@ class Evaluation:
             self.lvis.load()
             self.lvis.save_cache(self.lvis_cache_dir)
 
-    def run(self) -> None:
+    def run(self) -> bool:
         logger_file_handler = logging.FileHandler(self.log_file_path)
         logger_file_handler.setFormatter(self.logger_format)
         self.logger.addHandler(logger_file_handler)
 
         instance = PipelineEvaluationInstance(self.__configure_pipeline(self.config.pipeline), self.intermediate_dir)
 
+        aborted = False
+
         if not self.config.eval_only:
             try:
                 if self.config.stage_by_stage:
-                    self.__run_stage_by_stage(instance)
+                    aborted = not self.__run_stage_by_stage(instance)
                 else:
-                    self.__run_object_by_object(instance)
+                    aborted = not self.__run_object_by_object(instance)
             finally:
                 self.logger.removeHandler(logger_file_handler)
                 logger_file_handler.close()
 
+        if aborted:
+            return False
+
         evaluate_results(self.lvis, self.embedder, instance, self.results_dir)
 
-    def __run_stage_by_stage(self, instance: PipelineEvaluationInstance) -> None:
+        return True
+
+    def __run_stage_by_stage(self, instance: PipelineEvaluationInstance) -> bool:
         stages = Pipeline.Stage.between(self.config.from_stage, self.config.to_stage, default=Pipeline.Stage.all())
+
+        num_runs = 0
 
         for stage in stages:
             CONSOLE.log(f"Processing stage {str(stage)}...")
@@ -144,20 +160,38 @@ class Evaluation:
                 CONSOLE.log(f"Processing category {category}...")
 
                 for uid in self.lvis.dataset[category]:
-                    file = Path(self.lvis.uid_to_file[uid])
-                    CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
-                    self.__run_pipeline(instance, file, [stage])
+                    if self.config.pipeline_run_limit is not None and num_runs >= self.config.pipeline_run_limit:
+                        return False
 
-    def __run_object_by_object(self, instance: PipelineEvaluationInstance) -> None:
+                    file = Path(self.lvis.uid_to_file[uid])
+
+                    CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
+
+                    if self.__run_pipeline(instance, file, [stage]):
+                        num_runs += 1
+
+        return True
+
+    def __run_object_by_object(self, instance: PipelineEvaluationInstance) -> bool:
         stages = Pipeline.Stage.between(self.config.from_stage, self.config.to_stage, default=Pipeline.Stage.all())
+
+        num_runs = 0
 
         for category in self.lvis.dataset.keys():
             CONSOLE.log(f"Processing category {category}...")
 
             for uid in self.lvis.dataset[category]:
+                if self.config.pipeline_run_limit is not None and num_runs >= self.config.pipeline_run_limit:
+                    return False
+
                 file = Path(self.lvis.uid_to_file[uid])
+
                 CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
-                self.__run_pipeline(instance, file, stages)
+
+                if self.__run_pipeline(instance, file, stages):
+                    num_runs += 1
+
+        return True
 
     def __run_pipeline(
         self,
@@ -167,6 +201,23 @@ class Evaluation:
         handle_errors: bool = True,
     ) -> bool:
         pipeline_str = f"[{', '.join([stage.name for stage in stages])}]"
+
+        skip = False
+
+        if self.config.skip_finished:
+            try:
+                index_file = instance.get_index_file(file)
+                if index_file.exists():
+                    load_index(index_file, validate=True)
+                    skip = True  # If index exists and is valid then pipeline has finished
+            except Exception:
+                self.logger.warning(
+                    'Index of pipeline %s for file "%s" is invalid\n%s', pipeline_str, file, traceback.format_exc()
+                )
+
+        if skip:
+            self.logger.info('Skipping pipeline %s for file "%s"', pipeline_str, file)
+            return False
 
         with ProcessResult() as result:
             self.logger.info('Starting pipeline %s for file "%s"', pipeline_str, file)
