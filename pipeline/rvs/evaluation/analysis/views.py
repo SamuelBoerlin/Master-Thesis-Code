@@ -1,10 +1,12 @@
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
+from matplotlib import pyplot as plt
 from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.random import Generator
 from numpy.typing import NDArray
+from PIL import Image as im
 from tqdm import tqdm
 
 from rvs.evaluation.analysis.histogram import (
@@ -18,6 +20,7 @@ from rvs.evaluation.index import load_index
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.utils.console import file_link
+from rvs.utils.plot import image_grid_plot, save_figure
 
 
 def count_selected_views(
@@ -102,9 +105,14 @@ def embed_selected_views_avg(
 
         index_file = instance.get_index_file(model_file)
 
+        images: List[Path] = None
+
         try:
             images, _ = load_index(index_file)
+        except Exception:
+            pass
 
+        if images is not None:
             avg_embedding = None
 
             for image_file in images:
@@ -121,8 +129,6 @@ def embed_selected_views_avg(
                 embeddings[uid] = avg_embedding
 
                 # CONSOLE.log(f"Embedded selected views of {file_link(model_file)}")
-        except Exception:
-            pass
 
     return embeddings
 
@@ -180,3 +186,64 @@ def embed_random_views_avg(
                 # CONSOLE.log(f"Embedded random views of {file_link(model_file)}")
 
     return embeddings
+
+
+def plot_selected_views_samples(
+    lvis: LVISDataset,
+    uids: Set[Uid],
+    category: Category,
+    instance: PipelineEvaluationInstance,
+    rng: Generator,
+    number_of_views: int,
+    file: Path,
+) -> None:
+    samples: List[Tuple[im.Image, Uid]] = []
+
+    selection_rng = np.random.default_rng(seed=rng)
+
+    try:
+        all_views: List[Tuple[Path, Uid]] = []
+
+        for uid in lvis.dataset[category]:
+            if uid in uids:
+                model_file = Path(lvis.uid_to_file[uid])
+
+                index_file = instance.get_index_file(model_file)
+
+                try:
+                    selected_views, _ = load_index(index_file)
+                    for view in selected_views:
+                        all_views.append((view, uid))
+                except Exception:
+                    pass
+
+        selection_rng.shuffle(all_views)
+
+        for view, uid in all_views[:number_of_views]:
+            image = im.open(view)
+            image.load()
+            samples.append((image, uid))
+
+        fig = plt.figure()
+
+        fig_size = fig.get_size_inches()
+        fig.set_size_inches(fig_size[0], fig_size[0])
+
+        image_grid_plot(
+            fig,
+            images=[sample[0] for sample in samples],
+            labels=[sample[1] for sample in samples],
+            label_face_alpha=0.5,
+            border_color="black",
+        )
+
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        fig.set_facecolor((0, 0, 0, 0))
+
+        fig.tight_layout()
+
+        save_figure(fig, file)
+
+    finally:
+        for image, _ in samples:
+            image.close()

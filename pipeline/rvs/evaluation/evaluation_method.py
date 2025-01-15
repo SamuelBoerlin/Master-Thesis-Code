@@ -27,6 +27,7 @@ from rvs.evaluation.analysis.views import (
     embed_selected_views_avg,
     plot_selected_views_avg_per_category,
     plot_selected_views_histogram,
+    plot_selected_views_samples,
 )
 from rvs.evaluation.embedder import Embedder
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
@@ -148,6 +149,19 @@ def evaluate_results(
         output_dir / "precision_recall_auc.png",
         category_names=category_names_with_sizes,
     )
+
+    CONSOLE.rule("Create selected views samples...")
+
+    for category in tqdm(categories_embeddings.keys()):
+        plot_selected_views_samples(
+            lvis,
+            available_uids,
+            category,
+            instance,
+            np.random.default_rng(seed=238947978),
+            5 * 5,
+            output_dir / "views" / f"{category}.png",
+        )
 
 
 def embed_categories(categories: List[Category], embedder: Embedder) -> Dict[Category, NDArray]:

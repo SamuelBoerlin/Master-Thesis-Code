@@ -1,18 +1,23 @@
 from pathlib import Path
-from typing import Callable, Dict, NewType, Tuple, Union
+from typing import Any, Callable, Dict, List, NamedTuple, NewType, Optional, Tuple, Union
 
 import numpy as np
-from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
+from matplotlib.transforms import Bbox
 from numpy.typing import NDArray
 from PIL import Image as im
 
 Precision = NewType("Precision", NDArray)
 Recall = NewType("Recall", NDArray)
 Label = NewType("Label", str)
+UnitToInches = NamedTuple("UnitToInches", [("x", float), ("y", float)])
+Inches = NamedTuple("Inches", [("width", float), ("height", float)])
 
 
-def render_figure(fig: plt.Figure, callback: Callable[[im.Image], None]) -> None:
+def render_figure(fig: Figure, callback: Callable[[im.Image], None]) -> None:
     canvas = FigureCanvasAgg(fig)
     canvas.draw()
 
@@ -22,7 +27,7 @@ def render_figure(fig: plt.Figure, callback: Callable[[im.Image], None]) -> None
         callback(plot_image)
 
 
-def save_figure(fig: plt.Figure, file: Path) -> None:
+def save_figure(fig: Figure, file: Path) -> None:
     def save(image: im.Image) -> None:
         file.parent.mkdir(parents=True, exist_ok=True)
         image.save(file)
@@ -30,8 +35,21 @@ def save_figure(fig: plt.Figure, file: Path) -> None:
     render_figure(fig, save)
 
 
+def measure_figure(fig: Figure) -> Tuple[Bbox, Inches, UnitToInches]:
+    fig.canvas.draw()
+
+    fig_bb: Bbox = fig.get_window_extent()
+    fig_size_inches: NDArray = fig.get_size_inches()
+
+    return (
+        fig_bb,
+        Inches(fig_size_inches[0], fig_size_inches[1]),
+        UnitToInches(fig_size_inches[0] / fig_bb.width, fig_size_inches[1] / fig_bb.height),
+    )
+
+
 def bar_plot(
-    ax: plt.Axes,
+    ax: Axes,
     names: Tuple[str, ...],
     values: Union[Tuple[float, ...], NDArray],
     xlabel: str = None,
@@ -49,7 +67,7 @@ def bar_plot(
 
 
 def histogram_plot(
-    ax: plt.Axes,
+    ax: Axes,
     buckets: Tuple[str, ...],
     values: Union[Tuple[float, ...], NDArray],
     xlabel: str = None,
@@ -67,7 +85,7 @@ def histogram_plot(
 
 
 def discrete_histogram_plot(
-    ax: plt.Axes,
+    ax: Axes,
     values: NDArray,
     xlabel: str = None,
     ylabel: str = None,
@@ -85,7 +103,7 @@ def discrete_histogram_plot(
 
 
 def grouped_bar_plot(
-    ax: plt.Axes,
+    ax: Axes,
     groups: Tuple[str, ...],
     values: Dict[Label, Union[Tuple[float, ...], NDArray]],
     bar_width=0.2,
@@ -114,7 +132,7 @@ def grouped_bar_plot(
 
 
 def precision_recall_plot(
-    ax: plt.Axes,
+    ax: Axes,
     values: Dict[Label, Tuple[Precision, Recall]],
     xlabel: str = None,
     ylabel: str = None,
@@ -137,19 +155,110 @@ def precision_recall_plot(
 
 
 def place_legend_outside(
-    ax: plt.Axes,
+    ax: Axes,
     enlarge_figure: bool = True,
 ) -> None:
     ax.get_legend().set_bbox_to_anchor((1.0, 1.0))
 
-    plt.draw()
+    ax.figure.canvas.draw()
 
-    legend_bb = ax.get_legend().get_window_extent()
+    legend_bb: Bbox = ax.get_legend().get_window_extent()
 
-    fig_bb = ax.figure.get_window_extent()
-    fig_size = ax.figure.get_size_inches()
-
-    unit_to_inches = fig_size[0] / fig_bb.width
+    _, fig_size_inches, unit_to_inches = measure_figure(ax.figure)
 
     if enlarge_figure:
-        ax.figure.set_size_inches(fig_size[0] + legend_bb.width * unit_to_inches, fig_size[1])
+        ax.figure.set_size_inches(fig_size_inches.width + legend_bb.width * unit_to_inches.x, fig_size_inches.height)
+
+
+def image_grid_plot(
+    fig: Figure,
+    images: List[im.Image],
+    columns: Optional[int] = None,
+    enlarge_figure_for_more_columns_than: Optional[int] = 1,
+    labels: Optional[List[str]] = None,
+    label_face_color: Any = "auto",
+    label_face_alpha: float = 1.0,
+    border_color: Any = "auto",
+    border_alpha: float = 0.5,
+) -> List[List[Axes]]:
+    if labels is not None and len(labels) != len(images):
+        raise ValueError(f"Length of len(labels) ({len(labels)}) != len(images) ({len(images)})")
+
+    if len(images) == 0:
+        return
+
+    if columns is None:
+        columns = int(np.ceil(np.sqrt(len(images))))
+
+    assert columns > 0
+
+    rows = int(np.ceil(len(images) * 1.0 / columns))
+
+    assert rows > 0 and rows <= columns
+
+    if (
+        enlarge_figure_for_more_columns_than is not None
+        and enlarge_figure_for_more_columns_than > 0
+        and columns > enlarge_figure_for_more_columns_than
+    ):
+        _, fig_size_inches, _ = measure_figure(fig)
+
+        col_width_inches = fig_size_inches.width / enlarge_figure_for_more_columns_than
+        row_height_inches = fig_size_inches.height / enlarge_figure_for_more_columns_than
+
+        additional_width_inches = col_width_inches * (columns - enlarge_figure_for_more_columns_than)
+        additional_height_inches = max(0, row_height_inches * (rows - enlarge_figure_for_more_columns_than))
+
+        fig.set_size_inches(
+            fig_size_inches.width + additional_width_inches,
+            fig_size_inches.height + additional_height_inches,
+        )
+
+    axes: List[List[Axes]] = fig.subplots(nrows=rows, ncols=columns)
+
+    i = 0
+
+    for r in range(rows):
+        for c in range(columns):
+            ax = axes[r][c]
+
+            ax.axis("off")
+            ax.set_aspect("equal")
+
+            if i < len(images):
+                ax.imshow(images[i])
+
+                if labels is not None:
+                    ax.annotate(
+                        labels[i],
+                        (0.5, -0.015),
+                        horizontalalignment="center",
+                        verticalalignment="top",
+                        xycoords="axes fraction",
+                        bbox={
+                            "facecolor": fig.get_facecolor() if label_face_color == "auto" else label_face_color,
+                            "alpha": label_face_alpha,
+                            "boxstyle": "square",
+                            "edgecolor": "none",
+                            "linewidth": 0,
+                        },
+                    )
+
+                if border_color is not None:
+                    ax.add_patch(
+                        Rectangle(
+                            (0.0, 0.0),
+                            1.0,
+                            1.0,
+                            transform=ax.transAxes,
+                            linewidth=4,
+                            edgecolor=fig.get_edgecolor() if border_color == "auto" else border_color,
+                            facecolor="none",
+                            alpha=border_alpha,
+                            zorder=2,
+                        )
+                    )
+
+            i += 1
+
+    return axes
