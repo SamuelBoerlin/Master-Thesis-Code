@@ -20,7 +20,7 @@ from rvs.evaluation.index import load_index
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.utils.console import file_link
-from rvs.utils.plot import image_grid_plot, save_figure
+from rvs.utils.plot import image_grid_plot, measure_artist, measure_figure, save_figure
 
 
 def count_selected_views(
@@ -196,7 +196,10 @@ def plot_selected_views_samples(
     rng: Generator,
     number_of_views: int,
     file: Path,
+    category_names: Optional[Dict[Category, str]] = None,
 ) -> None:
+    category_name = category_names[category] if category_names is not None else category
+
     samples: List[Tuple[im.Image, Uid]] = []
 
     selection_rng = np.random.default_rng(seed=rng)
@@ -226,8 +229,24 @@ def plot_selected_views_samples(
 
         fig = plt.figure()
 
+        suptitle = fig.suptitle(
+            f'\nRandom Sample of Selected Views for Objaverse 1.0 LVIS Category\n"{category_name}"',
+            bbox={
+                "facecolor": fig.get_facecolor(),
+                "alpha": 0.5,
+                "boxstyle": "square",
+                "edgecolor": "none",
+                "linewidth": 0,
+            },
+            fontsize=24,
+            verticalalignment="top",
+            y=1.0,
+        )
+
         fig_size = fig.get_size_inches()
-        fig.set_size_inches(fig_size[0], fig_size[0])
+        fig_size[1] = fig_size[0]
+
+        fig.set_size_inches(fig_size[0], fig_size[1])
 
         image_grid_plot(
             fig,
@@ -237,7 +256,22 @@ def plot_selected_views_samples(
             border_color="black",
         )
 
-        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        for ax in fig.axes:
+            ax.set_anchor("S")
+
+        fig_size = fig.get_size_inches()
+
+        figure_bb, _, _ = measure_figure(fig)
+        suptitle_bb, _, _ = measure_artist(suptitle)
+
+        top_padding_inches = (1.0 - suptitle_bb.ymin / figure_bb.height) * fig_size[1]
+
+        fig_size[1] += top_padding_inches
+
+        fig.set_size_inches(fig_size[0], fig_size[1])
+
+        fig.subplots_adjust(left=0.0, right=1.0, top=(1.0 - top_padding_inches / fig_size[1]), bottom=0.0)
+
         fig.set_facecolor((0, 0, 0, 0))
 
         fig.tight_layout()

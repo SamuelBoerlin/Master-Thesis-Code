@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, NewType, Optional, Tuple, Union
 
 import numpy as np
+from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
@@ -46,6 +47,19 @@ def measure_figure(fig: Figure) -> Tuple[Bbox, Inches, UnitToInches]:
         Inches(fig_size_inches[0], fig_size_inches[1]),
         UnitToInches(fig_size_inches[0] / fig_bb.width, fig_size_inches[1] / fig_bb.height),
     )
+
+
+def measure_artist(artist: Artist) -> Tuple[Bbox, Inches, UnitToInches]:
+    fig = artist.get_figure()
+
+    if fig is None:
+        raise ValueError("Artist must belong to a figure")
+
+    _, _, unit_to_inches = measure_figure(fig)
+
+    artist_bb: Bbox = artist.get_window_extent()
+
+    return (artist_bb, Inches(artist_bb.width * unit_to_inches.x, artist_bb.height * unit_to_inches.y), unit_to_inches)
 
 
 def bar_plot(
@@ -178,6 +192,7 @@ def image_grid_plot(
     labels: Optional[List[str]] = None,
     label_face_color: Any = "auto",
     label_face_alpha: float = 1.0,
+    label_font_weight: Any = "bold",
     border_color: Any = "auto",
     border_alpha: float = 0.5,
 ) -> List[List[Axes]]:
@@ -216,6 +231,9 @@ def image_grid_plot(
 
     axes: List[List[Axes]] = fig.subplots(nrows=rows, ncols=columns)
 
+    if isinstance(axes, Axes):
+        axes = [[axes]]
+
     i = 0
 
     for r in range(rows):
@@ -235,6 +253,7 @@ def image_grid_plot(
                         horizontalalignment="center",
                         verticalalignment="top",
                         xycoords="axes fraction",
+                        fontweight=label_font_weight,
                         bbox={
                             "facecolor": fig.get_facecolor() if label_face_color == "auto" else label_face_color,
                             "alpha": label_face_alpha,
