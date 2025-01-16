@@ -3,10 +3,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-from typing import List, Optional, Set, Tuple, Type, Union
+from typing import Callable, List, Optional, Set, Tuple, Type, Union
 
 import yaml
-from nerfstudio.configs.base_config import InstantiateConfig
+from nerfstudio.configs.base_config import InstantiateConfig, PrintableConfig
 from nerfstudio.utils.rich_utils import CONSOLE
 from torch.multiprocessing import Process
 
@@ -18,15 +18,40 @@ from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.process import ProcessResult, start_process, stop_process
 from rvs.evaluation.worker import pipeline_worker_func
 from rvs.pipeline.pipeline import PipelineConfig, PipelineStage
+from rvs.utils.config import find_config_working_dir, load_config
 from rvs.utils.console import file_link
 from rvs.utils.logging import create_logger
+
+
+@dataclass
+class RuntimeSettings(PrintableConfig):
+    stage_by_stage: bool = False
+    """Whether to process the objects stage-by-stage (i.e. first SAMPLE_VIEWS for all objects, then RENDER_VIEWS, etc.) instead of all stages object-by-object"""
+
+    from_stage: Optional[PipelineStage] = None
+    """If configured the pipeline is only run from this stage and no earlier"""
+
+    to_stage: Optional[PipelineStage] = None
+    """If configured the pipeline is only run up to this stage and no further"""
+
+    run_limit: Optional[int] = None
+    """Maximum number of pipeline runs before it aborts"""
+
+    skip_finished: bool = False
+    """Whether to skip re-running pipelines if final output is already available"""
+
+    override_existing: bool = False
+    """Whether existing evaluation config can be overwritten"""
+
+    results_only: bool = False
+    """Run results part only"""
 
 
 @dataclass
 class EvaluationConfig(InstantiateConfig):
     _target: Type = field(default_factory=lambda: Evaluation)
 
-    pipeline: PipelineConfig = field(default_factory=lambda: PipelineConfig)
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     """Configuration of the pipeline to use for the evaluation"""
 
     lvis_categories: Optional[Set[str]] = None
@@ -47,30 +72,12 @@ class EvaluationConfig(InstantiateConfig):
     timestamp: str = "{timestamp}"
     """Evaluation/experiment timestamp."""
 
-    stage_by_stage: bool = False
-    """Whether to process the objects stage-by-stage (i.e. first SAMPLE_VIEWS for all objects, then RENDER_VIEWS, etc.) instead of all stages object-by-object"""
-
-    from_stage: Optional[PipelineStage] = None
-    """If configured the pipeline is only run from this stage and no earlier"""
-
-    to_stage: Optional[PipelineStage] = None
-    """If configured the pipeline is only run up to this stage and no further"""
-
-    pipeline_run_limit: Optional[int] = None
-    """Maximum number of pipeline runs before it aborts"""
-
-    skip_finished: bool = False
-    """Whether to skip re-running pipelines if final output is already available"""
-
     # FIXME This (or any other further "sub-configs") breaks tyro for some strange reason...
     # embedder: EmbedderConfig = field(defaulut_factory=lambda: EmbedderConfig)
     # """Configuration of the CLIP embedder used for the precision/recall/accuracy evaluation"""
 
-    eval_only: bool = False
-    """Run evaluation part only"""
-
-    override_existing: bool = False
-    """Whether existing evaluation config can be overwritten"""
+    runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
+    """Runtime settings that do not affect the results"""
 
 
 @dataclass
@@ -88,6 +95,7 @@ class PipelineRun:
 
 class Evaluation:
     config: EvaluationConfig
+    config_base: EvaluationConfig
 
     lvis: LVISDataset
     """Objaverse 1.0 LVIS dataset"""
@@ -107,9 +115,14 @@ class Evaluation:
     embedder: Embedder
 
     def __init__(self, config: EvaluationConfig):
-        self.config = config
+        self.config_base = config
+        self.config = replace(config)
 
-    def init(self) -> None:
+    def init(self, overrides: Callable[[EvaluationConfig], EvaluationConfig] = None) -> None:
+        self.config = replace(self.config_base)
+        if overrides is not None:
+            self.config = overrides(self.config)
+
         self.intermediate_dir = self.config.output_dir / "intermediate"
         self.intermediate_dir.mkdir(parents=True, exist_ok=True)
 
@@ -136,12 +149,12 @@ class Evaluation:
             self.lvis.save_cache(self.lvis_cache_dir)
 
     def run(self) -> bool:
-        if not self.config.override_existing:
-            self.__check_eval_config(self.config.output_dir / "config.yaml")
+        if not self.config.runtime.override_existing:
+            self.__check_eval_config_base(self.config.output_dir / "config.yaml")
 
         run_dir = self.__create_run_dir()
 
-        self.__save_eval_config([self.config.output_dir / "config.yaml", run_dir / "config.yaml"])
+        self.__save_eval_config_base([self.config.output_dir / "config.yaml", run_dir / "config.yaml"])
 
         with create_logger(
             __name__, files=[self.config.output_dir / "progress.log", run_dir / "progress.log"]
@@ -155,8 +168,8 @@ class Evaluation:
 
             aborted = False
 
-            if not self.config.eval_only:
-                if self.config.stage_by_stage:
+            if not self.config.runtime.results_only:
+                if self.config.runtime.stage_by_stage:
                     aborted = not self.__run_stage_by_stage(run)
                 else:
                     aborted = not self.__run_object_by_object(run)
@@ -181,29 +194,43 @@ class Evaluation:
         run_dir.mkdir(parents=True, exist_ok=False)
         return run_dir
 
-    def __check_eval_config(self, file: Path) -> None:
+    def __check_eval_config_base(self, file: Path) -> None:
         if file.exists():
             existing_config: EvaluationConfig
 
             try:
-                existing_config = yaml.load(file.read_text(encoding="utf8"), Loader=yaml.Loader)
+                existing_config = load_config(file, EvaluationConfig, defaults=None)
             except Exception as ex:
-                raise Exception(f'Unable to validate existing config "{file}"') from ex
+                raise Exception(
+                    f'Unable to validate existing config "{file}" Run with override_existing=True to override.'
+                ) from ex
 
-            if existing_config != self.config:
-                raise Exception(f'Existing config "{file}" does not match')
+            matches = True
 
-    def __save_eval_config(self, files: Union[Path, List[Path]]) -> None:
+            try:
+                if existing_config != self.config_base:
+                    matches = False
+            except (AttributeError, KeyError):
+                matches = False
+
+            if not matches:
+                raise Exception(
+                    f'Existing config "{file}" does not match. Run with override_existing=True to override.'
+                )
+
+    def __save_eval_config_base(self, files: Union[Path, List[Path]]) -> None:
         if isinstance(files, Path):
             files = [files]
-        cfg = yaml.dump(self.config)
+        cfg = yaml.dump(self.config_base)
         for file in files:
             file.parent.mkdir(parents=True, exist_ok=True)
             CONSOLE.log(f"Saving evaluation config to: {file_link(file)}")
             file.write_text(cfg, "utf8")
 
     def __run_stage_by_stage(self, run: EvaluationRun) -> bool:
-        stages = PipelineStage.between(self.config.from_stage, self.config.to_stage, default=PipelineStage.all())
+        stages = PipelineStage.between(
+            self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
+        )
 
         num_successful_runs = 0
 
@@ -221,8 +248,8 @@ class Evaluation:
 
                 for uid in self.lvis.dataset[category]:
                     if (
-                        self.config.pipeline_run_limit is not None
-                        and num_successful_runs >= self.config.pipeline_run_limit
+                        self.config.runtime.run_limit is not None
+                        and num_successful_runs >= self.config.runtime.run_limit
                     ):
                         return False
 
@@ -241,7 +268,9 @@ class Evaluation:
         return True
 
     def __run_object_by_object(self, run: EvaluationRun) -> bool:
-        stages = PipelineStage.between(self.config.from_stage, self.config.to_stage, default=PipelineStage.all())
+        stages = PipelineStage.between(
+            self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
+        )
 
         num_successful_runs = 0
 
@@ -254,7 +283,7 @@ class Evaluation:
             CONSOLE.log(f"Processing category {category}...")
 
             for uid in self.lvis.dataset[category]:
-                if self.config.pipeline_run_limit is not None and num_successful_runs >= self.config.pipeline_run_limit:
+                if self.config.runtime.run_limit is not None and num_successful_runs >= self.config.runtime.run_limit:
                     return False
 
                 file = Path(self.lvis.uid_to_file[uid])
@@ -281,7 +310,7 @@ class Evaluation:
 
         skip = False
 
-        if self.config.skip_finished:
+        if self.config.runtime.skip_finished:
             try:
                 index_file = run.parent.instance.get_index_file(run.file)
                 if index_file.exists():
@@ -350,68 +379,46 @@ class Evaluation:
 
 
 @dataclass
-class EvaluationResumeConfig:
+class EvaluationResumeConfig(PrintableConfig):
     config: Path
+    """Path to config file to resume"""
 
-    def load(self) -> Tuple[EvaluationConfig, Optional[Path]]:
+    runtime: RuntimeSettings = field(
+        default_factory=lambda: RuntimeSettings(
+            # Skip finished pipelines by default since we're resuming
+            skip_finished=True,
+        )
+    )
+    """Runtime settings that do not affect the results"""
+
+    def load(self) -> Tuple[EvaluationConfig, Callable[[EvaluationConfig], EvaluationConfig], Optional[Path]]:
         if self.config is None:
             raise ValueError("No config path specified")
 
         if not self.config.exists() or not self.config.is_file():
             raise ValueError(f'Config file "{self.config}" does not exist')
 
-        config: EvaluationConfig = yaml.load(self.config.read_text(encoding="utf8"), Loader=yaml.Loader)
+        config = load_config(
+            self.config,
+            EvaluationConfig,
+            on_default_applied=lambda fpath, fvalue: CONSOLE.log(
+                f"[bold yellow]WARNING: Applied default value to missing field {fpath}: {fvalue}"
+            ),
+            on_default_detected=lambda fpath, fvalue: CONSOLE.log(
+                f"[bold yellow]WARNING: Detected new default value for missing field {fpath}: {fvalue}"
+            ),
+        )
 
-        working_dir = self.__find_working_dir(config, self.config.parent)
+        working_dir = find_config_working_dir(self.config, config.output_dir)
 
-        return (config, working_dir)
+        return (config, self.__apply_config_overrides, working_dir)
 
-    def __find_working_dir(self, config: EvaluationConfig, config_dir: Path) -> Optional[Path]:
-        if config.output_dir.is_absolute():
-            return None
+    def __apply_config_overrides(self, config: EvaluationConfig) -> EvaluationConfig:
+        runtime = replace(self.runtime)
 
-        assert config_dir.is_dir()
+        # Keep these settings from saved config as defaults
+        runtime.stage_by_stage = config.runtime.stage_by_stage
+        runtime.from_stage = config.runtime.from_stage
+        runtime.to_stage = config.runtime.to_stage
 
-        config_dir = config_dir.resolve()
-
-        common_dir = EvaluationResumeConfig.__find_common_base_dir(config_dir, config.output_dir)
-
-        if common_dir is None:
-            raise Exception(
-                f'Unable to determine output directory from previous output directory "{str(config.output_dir)}" and config directory "{str(config_dir)}"'
-            )
-
-        return common_dir.parent
-
-    @staticmethod
-    def __find_common_base_dir(full: Path, part: Path) -> Optional[Path]:
-        full = full.resolve()
-
-        while True:
-            match = EvaluationResumeConfig.__match_dirs(full, part)
-            if match is not None:
-                return match
-
-            next_full = full.parent
-            if next_full == full:
-                return None
-            full = next_full
-
-    @staticmethod
-    def __match_dirs(full: Path, part: Path) -> Optional[Path]:
-        while True:
-            if part.is_absolute():
-                raise ValueError(f'Partial path "{str(part)}" is absolute path')
-
-            if part.name != full.name:
-                return None
-
-            next_part = part.parent
-            if next_part == next_part.parent:
-                return full
-            part = next_part
-
-            next_full = full.parent
-            if next_full == full:
-                return None
-            full = next_full
+        return replace(config, runtime=runtime)

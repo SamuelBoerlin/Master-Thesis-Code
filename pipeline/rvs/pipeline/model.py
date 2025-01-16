@@ -15,9 +15,9 @@ class WrapperHooksConfig(InstantiateConfig):
 class WrapperModelConfig(ModelConfig):
     _target: Type = field(default_factory=lambda: WrapperModel)
 
-    wrapper_model: ModelConfig = field(default_factory=lambda: ModelConfig)
+    wrapper_model: ModelConfig = field(default_factory=ModelConfig)
 
-    wrapper_hooks: WrapperHooksConfig = field(default_factory=lambda: WrapperHooksConfig())
+    wrapper_hooks: WrapperHooksConfig = field(default_factory=WrapperHooksConfig)
 
     def setup(self, **kwargs) -> Any:
         return super().setup(

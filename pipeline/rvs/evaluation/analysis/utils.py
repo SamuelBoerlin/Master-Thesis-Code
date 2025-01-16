@@ -21,6 +21,8 @@ def rename_categories_tuple(
     categories: Tuple[Category, ...],
     category_names: Optional[Dict[Category, str]],
 ) -> Tuple[Category, ...]:
+    if category_names is None:
+        return categories
     return tuple([category_names[category] if category in category_names else category for category in categories])
 
 

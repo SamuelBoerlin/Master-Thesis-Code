@@ -4,7 +4,7 @@ import os
 # Required for headless rendering with pyrenderer and trimesh
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["PYGLET_HEADLESS"] = "1"
-from typing import Any
+from typing import Any, Callable, Optional
 
 import tyro
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
@@ -22,19 +22,22 @@ def main(config: Any):
         raise Exception("Invalid config type")
 
 
-def run_evaluation(config: EvaluationConfig) -> None:
+def run_evaluation(
+    config: EvaluationConfig,
+    overrides: Optional[Callable[[EvaluationConfig], EvaluationConfig]] = None,
+) -> None:
     eval: Evaluation = config.setup()
-    eval.init()
+    eval.init(overrides=overrides)
     eval.run()
 
 
 def resume_evaluation(config: EvaluationResumeConfig) -> None:
-    eval_config, working_dir = config.load()
+    eval_config, eval_config_overrides, working_dir = config.load()
 
     if working_dir is not None:
         os.chdir(working_dir)
 
-    run_evaluation(eval_config)
+    run_evaluation(eval_config, overrides=eval_config_overrides)
 
 
 def entrypoint():

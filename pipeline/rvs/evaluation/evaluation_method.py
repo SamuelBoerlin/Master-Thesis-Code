@@ -18,7 +18,12 @@ from rvs.evaluation.analysis.precision_recall import (
     plot_precision_recall,
     plot_precision_recall_auc,
 )
-from rvs.evaluation.analysis.similarity import calculate_similarity_to_ground_truth, plot_avg_similarities_per_category
+from rvs.evaluation.analysis.similarity import (
+    calculate_avg_similarity_between_all_models_and_category_ground_truths,
+    calculate_similarity_to_ground_truth,
+    plot_avg_similarities_per_category,
+    plot_avg_similariy_between_models_and_categories,
+)
 from rvs.evaluation.analysis.utils import count_category_items
 from rvs.evaluation.analysis.views import (
     calculate_selected_views_avg_per_category,
@@ -84,6 +89,14 @@ def evaluate_results(
         },
         categories_embeddings,
     )
+    cross_similarities = calculate_avg_similarity_between_all_models_and_category_ground_truths(
+        lvis,
+        {
+            f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
+            f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
+        },
+        categories_embeddings,
+    )
 
     CONSOLE.rule("Calculate precision/recall...")
     precision_recall = calculate_precision_recall(
@@ -135,6 +148,14 @@ def evaluate_results(
         output_dir / "similarities.png",
         category_names=category_names_with_sizes,
     )
+
+    for category in cross_similarities.keys():
+        plot_avg_similariy_between_models_and_categories(
+            cross_similarities[category],
+            category,
+            output_dir / "cross_similarity" / f"{category}.png",
+            category_names=category_names_with_sizes,
+        )
 
     for category in categories_embeddings.keys():
         plot_precision_recall(
