@@ -53,7 +53,7 @@ class PipelineConfig(ExperimentConfig):
     model_file: Path = None
     """Path to .glb 3D model file."""
 
-    stages: Optional[Set["Pipeline.Stage"]] = None
+    stages: Optional[Set["PipelineStage"]] = None
     """Which stages of the pipeline should be run. If empty all stages are run."""
 
     #################
@@ -149,15 +149,15 @@ class Pipeline:
     def run(self) -> "Pipeline.State":
         pipeline_state = Pipeline.State(self)
 
-        if self.should_run_stage(Pipeline.Stage.SAMPLE_VIEWS):
+        if self.should_run_stage(PipelineStage.SAMPLE_VIEWS):
             CONSOLE.log("Generating view positions...")
             pipeline_state.training_views = self.views.generate()
             transforms_path = self.__save_transforms(pipeline_state)
-        elif self.should_load_stage(Pipeline.Stage.SAMPLE_VIEWS):
+        elif self.should_load_stage(PipelineStage.SAMPLE_VIEWS):
             CONSOLE.log("Loading view positions...")
             transforms_path = self.__load_transforms(pipeline_state)
 
-        if self.should_run_stage(Pipeline.Stage.RENDER_VIEWS):
+        if self.should_run_stage(PipelineStage.RENDER_VIEWS):
             CONSOLE.log("Rendering view images...")
             with ThreadedImageSaver(self.__renderer_output_dir, callback=self.__on_saved_view) as saver:
                 self.renderer.render(self.config.model_file, pipeline_state.training_views, saver.save)
@@ -166,7 +166,7 @@ class Pipeline:
         for view in pipeline_state.training_views:
             self.__set_view_path(view)
 
-        if self.should_run_stage(Pipeline.Stage.SAMPLE_POSITIONS):
+        if self.should_run_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Sampling positions...")
             pipeline_state.sample_positions = self.sampler.sample(self.config.model_file)
             self.__save_sample_positions(pipeline_state)
@@ -186,29 +186,29 @@ class Pipeline:
                             ),
                         ),
                     )
-        elif self.should_load_stage(Pipeline.Stage.SAMPLE_POSITIONS):
+        elif self.should_load_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Loading positions...")
             self.__load_sample_positions(pipeline_state)
 
-        if self.should_run_stage(Pipeline.Stage.TRAIN_FIELD):
+        if self.should_run_stage(PipelineStage.TRAIN_FIELD):
             CONSOLE.log("Training radiance field...")
             self.field.init(pipeline_state, transforms_path, self.__field_output_dir, **self.kwargs)
             self.field.train()
-        elif self.should_load_stage(Pipeline.Stage.TRAIN_FIELD):
+        elif self.should_load_stage(PipelineStage.TRAIN_FIELD):
             CONSOLE.log("Loading radiance field...")
             self.field.init(
                 pipeline_state, transforms_path, self.__field_output_dir, load_from_checkpoint=True, **self.kwargs
             )
 
-        if self.should_run_stage(Pipeline.Stage.SAMPLE_EMBEDDINGS):
+        if self.should_run_stage(PipelineStage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Sampling embeddings...")
             pipeline_state.sample_embeddings = self.field.sample(pipeline_state.sample_positions)
             self.__save_sample_embeddings(pipeline_state)
-        elif self.should_load_stage(Pipeline.Stage.SAMPLE_EMBEDDINGS):
+        elif self.should_load_stage(PipelineStage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Loading embeddings...")
             self.__load_sample_embeddings(pipeline_state)
 
-        if self.should_run_stage(Pipeline.Stage.CLUSTER_EMBEDDINGS):
+        if self.should_run_stage(PipelineStage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Clustering embeddings...")
             pipeline_state.sample_clusters = self.clustering.cluster(pipeline_state.sample_embeddings)
             self.__save_clusters(pipeline_state)
@@ -231,11 +231,11 @@ class Pipeline:
                         ),
                         hard_assignments=self.config.render_sample_clusters_hard_assignment,
                     )
-        elif self.should_load_stage(Pipeline.Stage.CLUSTER_EMBEDDINGS):
+        elif self.should_load_stage(PipelineStage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Loading clusters...")
             self.__load_clusters(pipeline_state)
 
-        if self.should_run_stage(Pipeline.Stage.SELECT_VIEWS):
+        if self.should_run_stage(PipelineStage.SELECT_VIEWS):
             CONSOLE.log("Selecting views...")
             pipeline_state.selected_views = self.selection.select(pipeline_state.sample_clusters, pipeline_state)
 
@@ -265,10 +265,10 @@ class Pipeline:
 
         return pipeline_state
 
-    def should_run_stage(self, stage: "Pipeline.Stage") -> bool:
+    def should_run_stage(self, stage: "PipelineStage") -> bool:
         return self.config.stages is None or stage in self.config.stages
 
-    def should_load_stage(self, stage: "Pipeline.Stage") -> bool:
+    def should_load_stage(self, stage: "PipelineStage") -> bool:
         return self.config.stages is None or stage.required_by(self.config.stages)
 
     def __save_transforms(self, state: "Pipeline.State") -> Path:
@@ -367,43 +367,66 @@ class Pipeline:
         def __init__(self, pipeline: "Pipeline") -> None:
             self.pipeline = pipeline
 
-    class Stage(Enum):
-        SAMPLE_VIEWS = 1
-        RENDER_VIEWS = 2
-        SAMPLE_POSITIONS = 3
-        TRAIN_FIELD = 4
-        SAMPLE_EMBEDDINGS = 5
-        CLUSTER_EMBEDDINGS = 6
-        SELECT_VIEWS = 7
-        OUTPUT = 8
 
-        def depends_on(self, stage: "Pipeline.Stage") -> bool:
-            return self.value > stage.value
+class PipelineStage(str, Enum):
+    SAMPLE_VIEWS = "SAMPLE_VIEWS"
+    RENDER_VIEWS = "RENDER_VIEWS"
+    SAMPLE_POSITIONS = "SAMPLE_POSITIONS"
+    TRAIN_FIELD = "TRAIN_FIELD"
+    SAMPLE_EMBEDDINGS = "SAMPLE_EMBEDDINGS"
+    CLUSTER_EMBEDDINGS = "CLUSTER_EMBEDDINGS"
+    SELECT_VIEWS = "SELECT_VIEWS"
+    OUTPUT = "OUTPUT"
 
-        def required_by(self, stages: List["Pipeline.Stage"]) -> bool:
-            for stage in stages:
-                if stage.depends_on(self):
-                    return True
-            return False
+    _ignore_ = ["ORDER"]
+    ORDER = {}
 
-        def before(self) -> List["Pipeline.Stage"]:
-            return [stage for stage in Pipeline.Stage if stage.value <= self.value]
+    @property
+    def order(self) -> int:
+        return PipelineStage.ORDER[self]
 
-        def after(self) -> List["Pipeline.Stage"]:
-            return [stage for stage in Pipeline.Stage if stage.value >= self.value]
+    def depends_on(self, stage: "PipelineStage") -> bool:
+        return self.order > stage.order
 
-        @staticmethod
-        def all() -> List["Pipeline.Stage"]:
-            return [s for s in Pipeline.Stage]
+    def required_by(self, stages: List["PipelineStage"]) -> bool:
+        for stage in stages:
+            if stage.depends_on(self):
+                return True
+        return False
 
-        @staticmethod
-        def between(
-            start: Optional["Pipeline.Stage"], end: Optional["Pipeline.Stage"], default: List["Pipeline.Stage"] = []
-        ) -> List["Pipeline.Stage"]:
-            if start is not None and end is not None:
-                return [s for s in start.after() if s in end.before()]
-            elif start is not None:
-                return start.after()
-            elif end is not None:
-                return end.before()
-            return default
+    def before(self) -> List["PipelineStage"]:
+        return [stage for stage in PipelineStage if stage.order <= self.order]
+
+    def after(self) -> List["PipelineStage"]:
+        return [stage for stage in PipelineStage if stage.order >= self.order]
+
+    @staticmethod
+    def all() -> List["PipelineStage"]:
+        return [s for s in PipelineStage]
+
+    @staticmethod
+    def between(
+        start: Optional["PipelineStage"], end: Optional["PipelineStage"], default: List["PipelineStage"] = []
+    ) -> List["PipelineStage"]:
+        if start is not None and end is not None:
+            return [s for s in start.after() if s in end.before()]
+        elif start is not None:
+            return start.after()
+        elif end is not None:
+            return end.before()
+        return default
+
+
+PipelineStage.ORDER = {
+    PipelineStage.SAMPLE_VIEWS: 1,
+    PipelineStage.RENDER_VIEWS: 2,
+    PipelineStage.SAMPLE_POSITIONS: 3,
+    PipelineStage.TRAIN_FIELD: 4,
+    PipelineStage.SAMPLE_EMBEDDINGS: 5,
+    PipelineStage.CLUSTER_EMBEDDINGS: 6,
+    PipelineStage.SELECT_VIEWS: 7,
+    PipelineStage.OUTPUT: 8,
+}
+
+for stage in PipelineStage:
+    assert stage in PipelineStage.ORDER

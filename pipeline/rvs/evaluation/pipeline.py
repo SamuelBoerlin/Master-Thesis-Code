@@ -7,7 +7,7 @@ from typing import List, Optional
 import torch
 
 from rvs.evaluation.index import save_index
-from rvs.pipeline.pipeline import Pipeline, PipelineConfig
+from rvs.pipeline.pipeline import Pipeline, PipelineConfig, PipelineStage
 from rvs.scripts.rvs import _set_random_seed
 from rvs.utils.nerfstudio import create_transforms_json, get_frame_name
 
@@ -35,7 +35,7 @@ class PipelineEvaluationInstance:
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.pipeline_dir.mkdir(parents=True, exist_ok=True)
 
-    def run(self, file: Path, stages: Optional[List[Pipeline.Stage]] = None) -> None:
+    def run(self, file: Path, stages: Optional[List[PipelineStage]] = None) -> None:
         pipeline = PipelineEvaluationInstance.create_pipeline(self.config, self.pipeline_dir, file, stages)
 
         assert pipeline.config.output_dir == self.get_pipeline_dir(file)
@@ -108,12 +108,12 @@ class PipelineEvaluationInstance:
     def get_index_file(self, file: Path) -> Path:
         return self.get_results_dir(file) / INDEX_FILE_NAME
 
-    def create_pipeline_config(self, file: Path, stages: Optional[List[Pipeline.Stage]] = None) -> PipelineConfig:
+    def create_pipeline_config(self, file: Path, stages: Optional[List[PipelineStage]] = None) -> PipelineConfig:
         return PipelineEvaluationInstance.configure_pipeline(self.config, self.pipeline_dir, file, stages)
 
     @staticmethod
     def configure_pipeline(
-        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[Pipeline.Stage]]
+        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[PipelineStage]]
     ) -> PipelineConfig:
         config = replace(config)
         config = PipelineEvaluationInstance.__configure_pipeline_run_settings(config, output_dir, file, stages)
@@ -126,7 +126,7 @@ class PipelineEvaluationInstance:
 
     @staticmethod
     def create_pipeline(
-        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[Pipeline.Stage]]
+        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[PipelineStage]]
     ) -> Pipeline:
         pipeline: Pipeline = PipelineEvaluationInstance.configure_pipeline(config, output_dir, file, stages).setup(
             local_rank=0, world_size=1
@@ -141,7 +141,7 @@ class PipelineEvaluationInstance:
 
     @staticmethod
     def __configure_pipeline_run_settings(
-        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[Pipeline.Stage]]
+        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[PipelineStage]]
     ) -> PipelineConfig:
         config.output_dir = output_dir / file.name
         config.experiment_name = "evaluation"
