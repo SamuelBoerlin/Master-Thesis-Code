@@ -17,7 +17,7 @@ from rvs.evaluation.lvis import LVISDataset
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.process import ProcessResult, start_process, stop_process
 from rvs.evaluation.worker import pipeline_worker_func
-from rvs.pipeline.pipeline import Pipeline, PipelineConfig, PipelineStage
+from rvs.pipeline.pipeline import PipelineConfig, PipelineStage
 from rvs.utils.console import file_link
 from rvs.utils.logging import create_logger
 
@@ -68,6 +68,9 @@ class EvaluationConfig(InstantiateConfig):
 
     eval_only: bool = False
     """Run evaluation part only"""
+
+    override_existing: bool = False
+    """Whether existing evaluation config can be overwritten"""
 
 
 @dataclass
@@ -133,6 +136,9 @@ class Evaluation:
             self.lvis.save_cache(self.lvis_cache_dir)
 
     def run(self) -> bool:
+        if not self.config.override_existing:
+            self.__check_eval_config(self.config.output_dir / "config.yaml")
+
         run_dir = self.__create_run_dir()
 
         self.__save_eval_config([self.config.output_dir / "config.yaml", run_dir / "config.yaml"])
@@ -174,6 +180,18 @@ class Evaluation:
                 i += 1
         run_dir.mkdir(parents=True, exist_ok=False)
         return run_dir
+
+    def __check_eval_config(self, file: Path) -> None:
+        if file.exists():
+            existing_config: EvaluationConfig
+
+            try:
+                existing_config = yaml.load(file.read_text(encoding="utf8"), Loader=yaml.Loader)
+            except Exception as ex:
+                raise Exception(f'Unable to validate existing config "{file}"') from ex
+
+            if existing_config != self.config:
+                raise Exception(f'Existing config "{file}" does not match')
 
     def __save_eval_config(self, files: Union[Path, List[Path]]) -> None:
         if isinstance(files, Path):
