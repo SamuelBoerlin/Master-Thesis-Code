@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
 import yaml
+from git import Repo
+from git.exc import InvalidGitRepositoryError
 from nerfstudio.configs.base_config import InstantiateConfig, PrintableConfig
 from nerfstudio.utils.rich_utils import CONSOLE
 from torch.multiprocessing import Process
@@ -122,12 +124,20 @@ class Evaluation:
         self.config = replace(config)
 
     def init(self, overrides: Callable[[EvaluationConfig], EvaluationConfig] = None) -> None:
+        CONSOLE.rule("Initializing evaluation...")
+
         self.config = replace(self.config_base)
         if overrides is not None:
-            self.config = overrides(self.config)
+            self.config = replace(overrides(self.config))
+
+        self.__set_validated_metadata_key(
+            self.config,
+            "tracking",
+            self.__populate_tracking_metadata(self.__get_validated_metadata_key(self.config, "tracking")),
+        )
 
         # Always save metadata
-        self.config_base.runtime.metadata = self.config.runtime.metadata
+        self.config_base.runtime.metadata = dict(self.config.runtime.metadata)
 
         self.intermediate_dir = self.config.output_dir / "intermediate"
         self.intermediate_dir.mkdir(parents=True, exist_ok=True)
@@ -154,14 +164,36 @@ class Evaluation:
             self.lvis.load()
             self.lvis.save_cache(self.lvis_cache_dir)
 
+    def __populate_tracking_metadata(self, old_metadata: Dict[str, str]) -> Dict[str, str]:
+        new_metadata: Dict[str, str] = dict()
+        try:
+            source_path = Path(__file__).resolve()
+            with Repo(path=source_path.parent, search_parent_directories=True) as repo:
+                hash_list: List[str] = None
+                if "git_commit_hash" in old_metadata:
+                    hash_list = old_metadata["git_commit_hash"]
+                if not isinstance(hash_list, List):
+                    hash_list = []
+                hash = repo.head.object.hexsha
+                if len(hash_list) == 0 or hash_list[-1] != hash:
+                    hash_list.append(hash)
+                new_metadata["git_commit_hash"] = hash_list
+        except InvalidGitRepositoryError:
+            pass
+        return new_metadata
+
     def run(self) -> bool:
+        CONSOLE.rule("Running evaluation...")
+
+        saved_config = replace(self.config_base)
+
         if not self.config.runtime.override_existing:
             CONSOLE.log("Validating config...")
-            self.__check_eval_config_base(self.config.output_dir / "config.yaml")
+            self.__validate_eval_config(saved_config, self.config.output_dir / "config.yaml")
 
         run_dir = self.__create_run_dir()
 
-        self.__save_eval_config_base([self.config.output_dir / "config.yaml", run_dir / "config.yaml"])
+        self.__save_eval_config(saved_config, [self.config.output_dir / "config.yaml", run_dir / "config.yaml"])
 
         with create_logger(
             __name__, files=[self.config.output_dir / "progress.log", run_dir / "progress.log"]
@@ -201,19 +233,29 @@ class Evaluation:
         run_dir.mkdir(parents=True, exist_ok=False)
         return run_dir
 
-    def __check_eval_config_base(self, file: Path) -> None:
-        if file.exists():
-            # Runtime settings should be ignored so
-            # replace it all with defaults
-            default_runtime_settings = RuntimeSettings()
+    def __save_eval_config(self, config: EvaluationConfig, files: Union[Path, List[Path]]) -> None:
+        if isinstance(files, Path):
+            files = [files]
+        cfg = yaml.dump(config)
+        for file in files:
+            file.parent.mkdir(parents=True, exist_ok=True)
+            CONSOLE.log(f"Saving evaluation config to: {file_link(file)}")
+            file.write_text(cfg, "utf8")
 
-            new_config = replace(self.config_base)
-            new_config.runtime = default_runtime_settings
+    def __validate_eval_config(self, config: EvaluationConfig, file: Path) -> None:
+        if file.exists():
+            new_config = replace(config)
 
             existing_config: EvaluationConfig
             try:
                 existing_config = load_config(file, EvaluationConfig, default_config_factory=None)
-                existing_config.runtime = default_runtime_settings
+                # Runtime metadata should be ignored in comparison except for validated metadata
+                # so replace with new metadata and keep old validated metadata if it exists
+                existing_validated_metadata = self.__get_validated_metadata(existing_config)
+                existing_config.runtime.metadata = (
+                    dict(new_config.runtime.metadata) if new_config.runtime.metadata is not None else dict()
+                )
+                self.__set_validated_metadata(existing_config, existing_validated_metadata)
             except Exception as ex:
                 raise Exception(
                     f'Unable to validate existing config "{file}" Run with override_existing=True to override.'
@@ -260,14 +302,32 @@ class Evaluation:
                 CONSOLE.log(f"[bold red]ERROR: {err_msg}")
                 raise Exception(err_msg)
 
-    def __save_eval_config_base(self, files: Union[Path, List[Path]]) -> None:
-        if isinstance(files, Path):
-            files = [files]
-        cfg = yaml.dump(self.config_base)
-        for file in files:
-            file.parent.mkdir(parents=True, exist_ok=True)
-            CONSOLE.log(f"Saving evaluation config to: {file_link(file)}")
-            file.write_text(cfg, "utf8")
+    def __get_validated_metadata(self, config: EvaluationConfig) -> Dict[str, str]:
+        if config.runtime.metadata is not None and "validated" in config.runtime.metadata:
+            validated_metadata = config.runtime.metadata["validated"]
+            if isinstance(validated_metadata, Dict):
+                return validated_metadata
+        return dict()
+
+    def __get_validated_metadata_key(self, config: EvaluationConfig, key: str) -> Dict[str, str]:
+        metadata = self.__get_validated_metadata(config)
+        if key in metadata:
+            map = metadata[key]
+            if isinstance(map, Dict):
+                return map
+        return dict()
+
+    def __set_validated_metadata(self, config: EvaluationConfig, metadata: Dict[str, str]) -> None:
+        if config.runtime.metadata is None:
+            config.runtime.metadata = dict()
+        config.runtime.metadata["validated"] = metadata
+
+    def __set_validated_metadata_key(self, config: EvaluationConfig, key: str, metadata: Dict[str, str]) -> None:
+        validated_metadata = self.__get_validated_metadata(config)
+        validated_metadata[key] = metadata
+        if config.runtime.metadata is None:
+            config.runtime.metadata = dict()
+        config.runtime.metadata["validated"] = validated_metadata
 
     def __run_stage_by_stage(self, run: EvaluationRun) -> bool:
         stages = PipelineStage.between(
