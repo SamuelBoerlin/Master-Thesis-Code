@@ -187,14 +187,15 @@ class Evaluation:
 
         saved_config = replace(self.config_base)
 
-        if not self.config.runtime.override_existing:
-            CONSOLE.log("Validating config...")
-            self.__validate_eval_config(saved_config, self.config.output_dir / "config.yaml")
+        CONSOLE.log("Validating config...")
+        self.__validate_eval_config(saved_config, self.config.output_dir / "config.yaml")
 
         run_dir = self.__create_run_dir()
 
+        CONSOLE.log("Saving config...")
         self.__save_eval_config(saved_config, [self.config.output_dir / "config.yaml", run_dir / "config.yaml"])
 
+        CONSOLE.log("Starting runs...")
         with create_logger(
             __name__, files=[self.config.output_dir / "progress.log", run_dir / "progress.log"]
         ) as progress_logger_handle:
@@ -243,6 +244,12 @@ class Evaluation:
             file.write_text(cfg, "utf8")
 
     def __validate_eval_config(self, config: EvaluationConfig, file: Path) -> None:
+        fail_on_difference = not self.config.runtime.override_existing
+
+        prefix = "[bold yellow]WARNING: "
+        if fail_on_difference:
+            prefix = "[bold red]ERROR: "
+
         if file.exists():
             new_config = replace(config)
 
@@ -257,28 +264,27 @@ class Evaluation:
                 )
                 self.__set_validated_metadata(existing_config, existing_validated_metadata)
             except Exception as ex:
-                raise Exception(
-                    f'Unable to validate existing config "{file}" Run with override_existing=True to override.'
-                ) from ex
+                err_msg = f'Unable to validate existing config "{file}" Run with override_existing=True to override.'
+                CONSOLE.log(f"{prefix}{err_msg}")
+                if fail_on_difference:
+                    raise Exception(err_msg) from ex
 
             matches = True
 
             def on_missing_field(fpath, obj, fname, expected_value):
-                CONSOLE.log(f"[bold red]ERROR: Found missing field {fpath}, old value: {expected_value}")
+                CONSOLE.log(f"{prefix}Found missing field {fpath}, old value: {expected_value}")
                 nonlocal matches
                 matches = False
 
             def on_changed_field(fpath, obj, fname, expected_value, actual_value):
                 CONSOLE.log(
-                    f"[bold red]ERROR: Found changed field {fpath}, old value: {expected_value}, new value: {actual_value}"
+                    f"{prefix}Found changed field {fpath}, old value: {expected_value}, new value: {actual_value}"
                 )
                 nonlocal matches
                 matches = False
 
             def on_unknown_field(fpath, obj, fname, actual_value):
-                CONSOLE.log(
-                    f"[bold red]ERROR: Found unexpected field {fpath}, old value: N/A, new value: {actual_value}"
-                )
+                CONSOLE.log(f"{prefix}Found unexpected field {fpath}, old value: N/A, new value: {actual_value}")
                 nonlocal matches
                 matches = False
 
@@ -298,9 +304,12 @@ class Evaluation:
                     matches = False
 
             if not matches:
-                err_msg = f'Existing config "{file}" does not match. Run with override_existing=True to override.'
-                CONSOLE.log(f"[bold red]ERROR: {err_msg}")
-                raise Exception(err_msg)
+                err_msg = f'Existing config "{file}" does not match.'
+                if fail_on_difference:
+                    err_msg += " Run with override_existing=True to override."
+                CONSOLE.log(f"{prefix}{err_msg}")
+                if fail_on_difference:
+                    raise Exception(err_msg)
 
     def __get_validated_metadata(self, config: EvaluationConfig) -> Dict[str, str]:
         if config.runtime.metadata is not None and "validated" in config.runtime.metadata:
