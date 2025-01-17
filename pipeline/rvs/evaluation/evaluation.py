@@ -3,7 +3,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-from typing import Callable, List, Optional, Set, Tuple, Type, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
 import yaml
 from nerfstudio.configs.base_config import InstantiateConfig, PrintableConfig
@@ -18,14 +18,17 @@ from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.process import ProcessResult, start_process, stop_process
 from rvs.evaluation.worker import pipeline_worker_func
 from rvs.pipeline.pipeline import PipelineConfig, PipelineStage
-from rvs.utils.config import find_config_working_dir, load_config
+from rvs.utils.config import find_changed_config_fields, find_config_working_dir, load_config
 from rvs.utils.console import file_link
 from rvs.utils.logging import create_logger
 
 
 @dataclass
 class RuntimeSettings(PrintableConfig):
-    stage_by_stage: bool = False
+    metadata: Optional[Dict[str, str]] = None
+    """Additional metadata to be saved in the config"""
+
+    stage_by_stage: Optional[bool] = None
     """Whether to process the objects stage-by-stage (i.e. first SAMPLE_VIEWS for all objects, then RENDER_VIEWS, etc.) instead of all stages object-by-object"""
 
     from_stage: Optional[PipelineStage] = None
@@ -123,6 +126,9 @@ class Evaluation:
         if overrides is not None:
             self.config = overrides(self.config)
 
+        # Always save metadata
+        self.config_base.runtime.metadata = self.config.runtime.metadata
+
         self.intermediate_dir = self.config.output_dir / "intermediate"
         self.intermediate_dir.mkdir(parents=True, exist_ok=True)
 
@@ -150,6 +156,7 @@ class Evaluation:
 
     def run(self) -> bool:
         if not self.config.runtime.override_existing:
+            CONSOLE.log("Validating config...")
             self.__check_eval_config_base(self.config.output_dir / "config.yaml")
 
         run_dir = self.__create_run_dir()
@@ -196,10 +203,17 @@ class Evaluation:
 
     def __check_eval_config_base(self, file: Path) -> None:
         if file.exists():
-            existing_config: EvaluationConfig
+            # Runtime settings should be ignored so
+            # replace it all with defaults
+            default_runtime_settings = RuntimeSettings()
 
+            new_config = replace(self.config_base)
+            new_config.runtime = default_runtime_settings
+
+            existing_config: EvaluationConfig
             try:
-                existing_config = load_config(file, EvaluationConfig, defaults=None)
+                existing_config = load_config(file, EvaluationConfig, default_config_factory=None)
+                existing_config.runtime = default_runtime_settings
             except Exception as ex:
                 raise Exception(
                     f'Unable to validate existing config "{file}" Run with override_existing=True to override.'
@@ -207,16 +221,44 @@ class Evaluation:
 
             matches = True
 
-            try:
-                if existing_config != self.config_base:
-                    matches = False
-            except (AttributeError, KeyError):
+            def on_missing_field(fpath, obj, fname, expected_value):
+                CONSOLE.log(f"[bold red]ERROR: Found missing field {fpath}, old value: {expected_value}")
+                nonlocal matches
                 matches = False
 
-            if not matches:
-                raise Exception(
-                    f'Existing config "{file}" does not match. Run with override_existing=True to override.'
+            def on_changed_field(fpath, obj, fname, expected_value, actual_value):
+                CONSOLE.log(
+                    f"[bold red]ERROR: Found changed field {fpath}, old value: {expected_value}, new value: {actual_value}"
                 )
+                nonlocal matches
+                matches = False
+
+            def on_unknown_field(fpath, obj, fname, actual_value):
+                CONSOLE.log(
+                    f"[bold red]ERROR: Found unexpected field {fpath}, old value: N/A, new value: {actual_value}"
+                )
+                nonlocal matches
+                matches = False
+
+            find_changed_config_fields(
+                expected_config=existing_config,
+                config=new_config,
+                on_missing_field=on_missing_field,
+                on_changed_field=on_changed_field,
+                on_unknown_field=on_unknown_field,
+            )
+
+            if matches:
+                try:
+                    if existing_config != new_config:
+                        matches = False
+                except (AttributeError, KeyError):
+                    matches = False
+
+            if not matches:
+                err_msg = f'Existing config "{file}" does not match. Run with override_existing=True to override.'
+                CONSOLE.log(f"[bold red]ERROR: {err_msg}")
+                raise Exception(err_msg)
 
     def __save_eval_config_base(self, files: Union[Path, List[Path]]) -> None:
         if isinstance(files, Path):
@@ -401,11 +443,8 @@ class EvaluationResumeConfig(PrintableConfig):
         config = load_config(
             self.config,
             EvaluationConfig,
-            on_default_applied=lambda fpath, fvalue: CONSOLE.log(
-                f"[bold yellow]WARNING: Applied default value to missing field {fpath}: {fvalue}"
-            ),
-            on_default_detected=lambda fpath, fvalue: CONSOLE.log(
-                f"[bold yellow]WARNING: Detected new default value for missing field {fpath}: {fvalue}"
+            on_default_applied=lambda fpath, obj, fname, value: CONSOLE.log(
+                f"[bold yellow]WARNING: Applied default value to missing field {fpath}: {value}"
             ),
         )
 
@@ -417,8 +456,17 @@ class EvaluationResumeConfig(PrintableConfig):
         runtime = replace(self.runtime)
 
         # Keep these settings from saved config as defaults
-        runtime.stage_by_stage = config.runtime.stage_by_stage
-        runtime.from_stage = config.runtime.from_stage
-        runtime.to_stage = config.runtime.to_stage
+
+        if runtime.metadata is None:
+            runtime.metadata = config.runtime.metadata
+
+        if runtime.stage_by_stage is None:
+            runtime.stage_by_stage = config.runtime.stage_by_stage
+
+        if runtime.from_stage is None:
+            runtime.from_stage = config.runtime.from_stage
+
+        if runtime.to_stage is None:
+            runtime.to_stage = config.runtime.to_stage
 
         return replace(config, runtime=runtime)
