@@ -13,6 +13,7 @@ from PIL import Image as im
 
 from rvs.pipeline.clustering import Clustering, ClusteringConfig
 from rvs.pipeline.field import Field, FieldConfig
+from rvs.pipeline.io import PipelineIO
 from rvs.pipeline.renderer import Renderer, RendererConfig
 from rvs.pipeline.sampler import PositionSampler, PositionSamplerConfig
 from rvs.pipeline.selection import ViewSelection, ViewSelectionConfig
@@ -106,6 +107,8 @@ class Pipeline:
     clustering: Clustering
     selection: ViewSelection
 
+    __io: PipelineIO
+
     __renderer_output_dir: Path
     __sampler_output_dir: Path
     __field_output_dir: Path
@@ -116,33 +119,35 @@ class Pipeline:
         self.config = config
         self.kwargs = kwargs
 
-    def init(self) -> None:
+    def init(self, input_dirs: Optional[List[Path]] = None) -> None:
         output_dir = self.config.get_base_dir()
 
-        self.__renderer_output_dir = output_dir / "renderer"
-        self.__renderer_output_dir.mkdir(parents=True, exist_ok=True)
+        self.__io = PipelineIO(output_dir, input_dirs=input_dirs)
+
+        self.__renderer_output_dir = Path("renderer")
+        self.__io.mk_output_path(self.__renderer_output_dir)
 
         self.views = self.config.views.setup()
 
         self.renderer = self.config.renderer.setup()
 
-        self.__field_output_dir = output_dir / "field"
-        self.__field_output_dir.mkdir(parents=True, exist_ok=True)
+        self.__field_output_dir = Path("field")
+        self.__io.mk_output_path(self.__field_output_dir)
 
         self.field = self.config.field.setup()
 
-        self.__sampler_output_dir = output_dir / "sampler"
-        self.__sampler_output_dir.mkdir(parents=True, exist_ok=True)
+        self.__sampler_output_dir = Path("sampler")
+        self.__io.mk_output_path(self.__sampler_output_dir)
 
         self.sampler = self.config.sampler.setup()
 
-        self.__embedding_output_dir = output_dir / "embedding"
-        self.__embedding_output_dir.mkdir(parents=True, exist_ok=True)
+        self.__embedding_output_dir = Path("embedding")
+        self.__io.mk_output_path(self.__embedding_output_dir)
 
         self.clustering = self.config.clustering.setup()
 
-        self.__clustering_output_dir = output_dir / "clustering"
-        self.__clustering_output_dir.mkdir(parents=True, exist_ok=True)
+        self.__clustering_output_dir = Path("clustering")
+        self.__io.mk_output_path(self.__clustering_output_dir)
 
         self.selection = self.config.selection.setup()
 
@@ -150,21 +155,24 @@ class Pipeline:
         pipeline_state = Pipeline.State(self)
 
         if self.should_run_stage(PipelineStage.SAMPLE_VIEWS):
-            CONSOLE.log("Generating view positions...")
+            CONSOLE.log("Generating view transforms...")
             pipeline_state.training_views = self.views.generate()
             transforms_path = self.__save_transforms(pipeline_state)
         elif self.should_load_stage(PipelineStage.SAMPLE_VIEWS):
-            CONSOLE.log("Loading view positions...")
+            CONSOLE.log("Loading view transforms...")
             transforms_path = self.__load_transforms(pipeline_state)
 
         if self.should_run_stage(PipelineStage.RENDER_VIEWS):
             CONSOLE.log("Rendering view images...")
-            with ThreadedImageSaver(self.__renderer_output_dir, callback=self.__on_saved_view) as saver:
+            with ThreadedImageSaver(
+                self.__io.get_output_path(self.__renderer_output_dir), callback=self.__on_saved_view
+            ) as saver:
                 self.renderer.render(self.config.model_file, pipeline_state.training_views, saver.save)
-        # TODO Implement loading data?
-
-        for view in pipeline_state.training_views:
-            self.__set_view_path(view)
+            for view in pipeline_state.training_views:
+                self.__set_view_path(view, output=True)
+        elif self.should_load_stage(PipelineStage.RENDER_VIEWS):
+            CONSOLE.log("Loading view images...")
+            self.__load_view_paths(pipeline_state)
 
         if self.should_run_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Sampling positions...")
@@ -178,7 +186,7 @@ class Pipeline:
                         pipeline_state.training_views[i],
                         pipeline_state.sample_positions,
                         lambda sample_view, image: save_transforms_frame(
-                            self.__renderer_output_dir,
+                            self.__io.get_output_path(self.__renderer_output_dir),
                             sample_view,
                             image,
                             frame_name=get_frame_name(
@@ -192,12 +200,28 @@ class Pipeline:
 
         if self.should_run_stage(PipelineStage.TRAIN_FIELD):
             CONSOLE.log("Training radiance field...")
-            self.field.init(pipeline_state, transforms_path, self.__field_output_dir, **self.kwargs)
+            self.field.init(
+                pipeline_state,
+                transforms_path,
+                self.__io.get_output_path(self.__field_output_dir),
+                **self.kwargs,
+            )
             self.field.train()
         elif self.should_load_stage(PipelineStage.TRAIN_FIELD):
             CONSOLE.log("Loading radiance field...")
+
+            def has_checkpoint(path: Path) -> bool:
+                if path.exists():
+                    for _ in path.rglob("nerfstudio_models/step-*.ckpt"):
+                        return True
+                return False
+
             self.field.init(
-                pipeline_state, transforms_path, self.__field_output_dir, load_from_checkpoint=True, **self.kwargs
+                pipeline_state,
+                transforms_path,
+                self.__io.get_input_path(self.__field_output_dir, condition=has_checkpoint),
+                load_from_checkpoint=True,
+                **self.kwargs,
             )
 
         if self.should_run_stage(PipelineStage.SAMPLE_EMBEDDINGS):
@@ -222,7 +246,7 @@ class Pipeline:
                         pipeline_state.sample_embeddings,
                         pipeline_state.sample_clusters,
                         lambda sample_view, image: save_transforms_frame(
-                            self.__renderer_output_dir,
+                            self.__io.get_output_path(self.__renderer_output_dir),
                             sample_view,
                             image,
                             frame_name=get_frame_name(
@@ -248,7 +272,7 @@ class Pipeline:
                         pipeline_state.sample_embeddings,
                         pipeline_state.sample_clusters,
                         lambda sample_view, image: save_transforms_frame(
-                            self.__renderer_output_dir,
+                            self.__io.get_output_path(self.__renderer_output_dir),
                             sample_view,
                             image,
                             frame_name=get_frame_name(None, frame_index=i, frame_name="selected_{}.png"),
@@ -273,7 +297,7 @@ class Pipeline:
 
     def __save_transforms(self, state: "Pipeline.State") -> Path:
         path = save_transforms_json(
-            self.__renderer_output_dir,
+            self.__io.get_output_path(self.__renderer_output_dir),
             state.training_views,
             self.config.renderer.focal_length_x,
             self.config.renderer.focal_length_y,
@@ -285,7 +309,9 @@ class Pipeline:
 
     def __load_transforms(self, state: "Pipeline.State") -> Path:
         try:
-            path, views, fl_x, fl_y, w, h = load_transforms_json(self.__renderer_output_dir)
+            path, views, fl_x, fl_y, w, h = self.__io.load_input(
+                self.__renderer_output_dir, lambda path: load_transforms_json(path)
+            )
             # TODO Check if fl_x etc. matches with renderer config
             state.training_views = views
             CONSOLE.log(f"Loaded views transforms from {file_link(path)}")
@@ -298,21 +324,35 @@ class Pipeline:
         CONSOLE.log(f"Saved view {view.index} to {file_link(path)}")
         return path
 
-    def __set_view_path(self, view: View) -> None:
+    def __load_view_paths(self, state: "Pipeline.State") -> None:
+        try:
+            for view in state.training_views:
+                self.__set_view_path(view, output=False)
+        except Exception as ex:
+            CONSOLE.log("Failed loading view images:")
+            raise ex
+
+    def __set_view_path(self, view: View, output: bool) -> None:
         """Sets the view's path if path is not yet set and if a corresponding image file already exists"""
         if view.path is None:
             path = self.__renderer_output_dir / "images" / get_frame_name(view)
+            if output:
+                path = self.__io.get_output_path(path)
+            else:
+                path = self.__io.get_input_path(path)
             if path.exists():
                 view.path = path
+            else:
+                raise FileNotFoundError(f"View image {path} not found")
 
     def __save_sample_positions(self, state: "Pipeline.State") -> Path:
-        path = self.__sampler_output_dir / "positions.json"
+        path = self.__io.get_output_path(self.__sampler_output_dir / "positions.json")
         with path.open("w") as f:
             json.dump(state.sample_positions.tolist(), f)
         CONSOLE.log(f"Saved positions to {file_link(path)}")
 
     def __load_sample_positions(self, state: "Pipeline.State") -> Path:
-        path = self.__sampler_output_dir / "positions.json"
+        path = self.__io.get_input_path(self.__sampler_output_dir / "positions.json")
         try:
             with path.open("r") as f:
                 state.sample_positions = np.array(json.load(f))
@@ -323,13 +363,13 @@ class Pipeline:
             raise ex
 
     def __save_sample_embeddings(self, state: "Pipeline.State") -> Path:
-        path = self.__embedding_output_dir / "embeddings.json"
+        path = self.__io.get_output_path(self.__embedding_output_dir / "embeddings.json")
         with path.open("w") as f:
             json.dump(state.sample_embeddings.tolist(), f)
         CONSOLE.log(f"Saved embeddings to {file_link(path)}")
 
     def __load_sample_embeddings(self, state: "Pipeline.State") -> Path:
-        path = self.__embedding_output_dir / "embeddings.json"
+        path = self.__io.get_input_path(self.__embedding_output_dir / "embeddings.json")
         try:
             with path.open("r") as f:
                 state.sample_embeddings = np.array(json.load(f))
@@ -340,13 +380,13 @@ class Pipeline:
             raise ex
 
     def __save_clusters(self, state: "Pipeline.State") -> Path:
-        path = self.__clustering_output_dir / "clusters.json"
+        path = self.__io.get_output_path(self.__clustering_output_dir / "clusters.json")
         with path.open("w") as f:
             json.dump(state.sample_clusters.tolist(), f)
         CONSOLE.log(f"Saved clusters to {file_link(path)}")
 
     def __load_clusters(self, state: "Pipeline.State") -> Path:
-        path = self.__clustering_output_dir / "clusters.json"
+        path = self.__io.get_input_path(self.__clustering_output_dir / "clusters.json")
         try:
             with path.open("r") as f:
                 state.sample_clusters = np.array(json.load(f))
