@@ -115,14 +115,16 @@ class Pipeline:
     __embedding_output_dir: Path
     __clustering_output_dir: Path
 
+    @property
+    def output_dir(self) -> Path:
+        return self.config.get_base_dir()
+
     def __init__(self, config: PipelineConfig, **kwargs) -> None:
         self.config = config
         self.kwargs = kwargs
 
     def init(self, input_dirs: Optional[List[Path]] = None) -> None:
-        output_dir = self.config.get_base_dir()
-
-        self.__io = PipelineIO(output_dir, input_dirs=input_dirs)
+        self.__io = PipelineIO(self.output_dir, input_dirs=input_dirs)
 
         self.__renderer_output_dir = Path("renderer")
         self.__io.mk_output_path(self.__renderer_output_dir)

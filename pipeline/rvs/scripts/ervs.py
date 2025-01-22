@@ -4,6 +4,9 @@ import os
 # Required for headless rendering with pyrenderer and trimesh
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["PYGLET_HEADLESS"] = "1"
+import sys
+from dataclasses import replace
+from shlex import quote
 from typing import Any, Callable, Optional
 
 import tyro
@@ -15,20 +18,25 @@ from rvs.evaluation.evaluation import Evaluation, EvaluationConfig, EvaluationRe
 
 def main(config: Any):
     if isinstance(config, EvaluationConfig):
-        run_evaluation(config)
+        start_evaluation(config)
     elif isinstance(config, EvaluationResumeConfig):
         resume_evaluation(config)
     else:
         raise Exception("Invalid config type")
 
 
-def run_evaluation(
-    config: EvaluationConfig,
-    overrides: Optional[Callable[[EvaluationConfig], EvaluationConfig]] = None,
-) -> None:
-    eval: Evaluation = config.setup()
-    eval.init(overrides=overrides)
-    eval.run()
+def start_evaluation(eval_config: EvaluationConfig) -> None:
+    eval_config = replace(eval_config)
+
+    if eval_config.runtime.metadata is None:
+        eval_config.runtime.metadata = dict()
+
+    eval_config.runtime.metadata["args"] = sys.argv
+    eval_config.runtime.metadata["unix_shell_command"] = sys.argv[0] + " ".join(
+        [arg if arg.startswith("--") else quote(arg) for arg in sys.argv[1:]]
+    )
+
+    run_evaluation(eval_config)
 
 
 def resume_evaluation(config: EvaluationResumeConfig) -> None:
@@ -38,6 +46,15 @@ def resume_evaluation(config: EvaluationResumeConfig) -> None:
         os.chdir(working_dir)
 
     run_evaluation(eval_config, overrides=eval_config_overrides)
+
+
+def run_evaluation(
+    config: EvaluationConfig,
+    overrides: Optional[Callable[[EvaluationConfig], EvaluationConfig]] = None,
+) -> None:
+    eval: Evaluation = config.setup(overrides=overrides)
+    eval.init()
+    eval.run()
 
 
 def entrypoint():

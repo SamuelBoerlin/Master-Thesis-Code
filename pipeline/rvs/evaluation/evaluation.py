@@ -74,10 +74,13 @@ class EvaluationConfig(InstantiateConfig):
     output_dir: Path = Path("outputs")
     """Relative or absolute output directory to save all output data"""
 
+    inputs: Optional[List[Path]] = None
+    """Inputs (paths to evaluation configs) to be used to load data from other evaluations for stages that haven't been processed in this evaluation. Sources later in the list take precendece over sources earlier in the list."""
+
     timestamp: str = "{timestamp}"
     """Evaluation/experiment timestamp."""
 
-    # FIXME This (or any other further "sub-configs") breaks tyro for some strange reason...
+    # FIXME Config is fixed, re-implement this
     # embedder: EmbedderConfig = field(defaulut_factory=lambda: EmbedderConfig)
     # """Configuration of the CLIP embedder used for the precision/recall/accuracy evaluation"""
 
@@ -119,12 +122,10 @@ class Evaluation:
 
     embedder: Embedder
 
-    def __init__(self, config: EvaluationConfig):
-        self.config_base = config
-        self.config = replace(config)
+    input_pipelines: Optional[List[PipelineEvaluationInstance]]
 
-    def init(self, overrides: Callable[[EvaluationConfig], EvaluationConfig] = None) -> None:
-        CONSOLE.rule("Initializing evaluation...")
+    def __init__(self, config: EvaluationConfig, overrides: Callable[[EvaluationConfig], EvaluationConfig] = None):
+        self.config_base = config
 
         self.config = replace(self.config_base)
         if overrides is not None:
@@ -136,9 +137,13 @@ class Evaluation:
             self.__populate_tracking_metadata(self.__get_validated_metadata_key(self.config, "tracking")),
         )
 
-        # Always save metadata
+        # Always persist metadata
         self.config_base.runtime.metadata = dict(self.config.runtime.metadata)
 
+    def init(self) -> None:
+        CONSOLE.rule("Initializing evaluation...")
+
+        CONSOLE.log("Creating directories...")
         self.intermediate_dir = self.config.output_dir / "intermediate"
         self.intermediate_dir.mkdir(parents=True, exist_ok=True)
 
@@ -148,12 +153,16 @@ class Evaluation:
         self.runs_dir = self.config.output_dir / "runs"
         self.runs_dir.mkdir(parents=True, exist_ok=True)
 
-        CONSOLE.log("Setting up embedder...")
-        self.embedder = EmbedderConfig().setup()
-
         self.lvis_cache_dir = self.config.output_dir / "lvis"
         self.lvis_cache_dir.mkdir(parents=True, exist_ok=True)
 
+        CONSOLE.log("Setting up inputs...")
+        self.input_pipelines = self.__setup_inputs()
+
+        CONSOLE.log("Setting up embedder...")
+        self.embedder = EmbedderConfig().setup()
+
+        CONSOLE.log("Setting up dataset...")
         self.lvis = LVISDataset(
             self.config.lvis_categories,
             self.config.lvis_uids,
@@ -182,6 +191,54 @@ class Evaluation:
             pass
         return new_metadata
 
+    def __setup_inputs(self) -> Optional[List[PipelineEvaluationInstance]]:
+        if self.config.inputs is not None and len(self.config.inputs) > 0:
+            input_pipelines: List[PipelineEvaluationInstance] = []
+
+            for input_config_path in self.config.inputs:
+                try:
+                    input_pipelines.append(self.__setup_input(input_config_path))
+                except Exception as ex:
+                    err_msg = f'Invalid input "{input_config_path}": {str(ex)}'
+                    CONSOLE.log(f"[bold red]ERROR: {err_msg}")
+                    raise Exception(err_msg)
+
+            return list(reversed(input_pipelines))
+        else:
+            return None
+
+    def __setup_input(self, input_config_path: Path) -> Path:
+        input_config = load_config(input_config_path, EvaluationConfig)
+        working_dir = find_config_working_dir(input_config_path, input_config.output_dir)
+
+        evaluation_dir = input_config.output_dir
+        if working_dir is not None:
+            evaluation_dir = working_dir / evaluation_dir
+
+        evaluation_dir = evaluation_dir.resolve()
+
+        if not evaluation_dir.is_absolute():
+            raise Exception(f'Input evaluation path "{evaluation_dir}" is not absolute')
+
+        if not evaluation_dir.exists():
+            raise Exception(f'Input evaluation path "{evaluation_dir}" does not exist')
+
+        intermediate_dir = evaluation_dir / "intermediate"
+
+        if not intermediate_dir.exists():
+            raise Exception(f'Input evaluation intermediate path "{intermediate_dir}" does not exist')
+
+        input_eval: Evaluation = input_config.setup()
+
+        instance = PipelineEvaluationInstance(
+            input_eval.__configure_pipeline(input_eval.config.pipeline), intermediate_dir
+        )
+
+        if not instance.pipeline_dir.exists():
+            raise Exception(f'Input evaluation pipeline path "{instance.pipeline_dir}" does not exist')
+
+        return instance
+
     def run(self) -> bool:
         CONSOLE.rule("Running evaluation...")
 
@@ -201,10 +258,14 @@ class Evaluation:
         ) as progress_logger_handle:
             run = EvaluationRun(
                 instance=PipelineEvaluationInstance(
-                    self.__configure_pipeline(self.config.pipeline), self.intermediate_dir
+                    self.__configure_pipeline(self.config.pipeline),
+                    self.intermediate_dir,
+                    input_pipelines=self.input_pipelines,
                 ),
                 progress_logger=progress_logger_handle.logger,
             )
+
+            run.instance.init()
 
             aborted = False
 
@@ -251,17 +312,24 @@ class Evaluation:
             prefix = "[bold red]ERROR: "
 
         if file.exists():
-            new_config = replace(config)
+            new_config, metadata_removed = self.__strip_unvalidated_metadata(config)
+
+            if new_config.runtime.metadata is None:
+                new_config.runtime.metadata = dict()
+            else:
+                new_config.runtime.metadata = dict(new_config.runtime.metadata)
+
+            if metadata_removed:
+                new_config.runtime.metadata["<...>"] = "<...>"
 
             existing_config: EvaluationConfig
             try:
                 existing_config = load_config(file, EvaluationConfig, default_config_factory=None)
-                # Runtime metadata should be ignored in comparison except for validated metadata
+                # Runtime data should be ignored in comparison except for validated metadata
                 # so replace with new metadata and keep old validated metadata if it exists
                 existing_validated_metadata = self.__get_validated_metadata(existing_config)
-                existing_config.runtime.metadata = (
-                    dict(new_config.runtime.metadata) if new_config.runtime.metadata is not None else dict()
-                )
+                existing_config = replace(existing_config, runtime=replace(new_config.runtime))
+                existing_config.runtime.metadata = dict(new_config.runtime.metadata)
                 self.__set_validated_metadata(existing_config, existing_validated_metadata)
             except Exception as ex:
                 err_msg = f'Unable to validate existing config "{file}" Run with override_existing=True to override.'
@@ -310,6 +378,24 @@ class Evaluation:
                 CONSOLE.log(f"{prefix}{err_msg}")
                 if fail_on_difference:
                     raise Exception(err_msg)
+
+    def __strip_unvalidated_metadata(self, config: EvaluationConfig) -> Tuple[EvaluationConfig, bool]:
+        runtime = replace(config.runtime)
+        config = replace(config, runtime=runtime)
+
+        removed = False
+
+        if config.runtime.metadata is not None:
+            stripped_metadata = dict(config.runtime.metadata)
+
+            for key in list(stripped_metadata.keys()):
+                if key != "validated":
+                    del stripped_metadata[key]
+                    removed = True
+
+            config.runtime.metadata = stripped_metadata
+
+        return (config, removed)
 
     def __get_validated_metadata(self, config: EvaluationConfig) -> Dict[str, str]:
         if config.runtime.metadata is not None and "validated" in config.runtime.metadata:
@@ -483,7 +569,7 @@ class Evaluation:
             return str(file)
 
     def __configure_pipeline(self, config: PipelineConfig) -> PipelineConfig:
-        config = replace(self.config.pipeline)
+        config = replace(config)
         config.timestamp = self.config.timestamp
         config.set_timestamp()
         return config

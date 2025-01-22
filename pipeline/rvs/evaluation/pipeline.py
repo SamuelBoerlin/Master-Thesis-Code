@@ -27,16 +27,40 @@ class PipelineEvaluationInstance:
     def pipeline_dir(self) -> Path:
         return self.output_dir / "pipeline"
 
-    def __init__(self, config: PipelineConfig, output_dir: Path) -> None:
-        self.output_dir = output_dir
-        self.config = config
+    input_pipelines: Optional[List["PipelineEvaluationInstance"]]
 
+    def __init__(
+        self,
+        config: PipelineConfig,
+        output_dir: Path,
+        input_pipelines: Optional[List["PipelineEvaluationInstance"]] = None,
+    ) -> None:
+        self.config = config
+        self.output_dir = output_dir
+        self.input_pipelines = input_pipelines
+
+    def init(self):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.pipeline_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self, file: Path, stages: Optional[List[PipelineStage]] = None) -> None:
-        pipeline = PipelineEvaluationInstance.create_pipeline(self.config, self.pipeline_dir, file, stages)
+        input_dirs = None
+
+        if self.input_pipelines is not None and len(self.input_pipelines) > 0:
+            input_dirs = []
+
+            for input_pipeline in self.input_pipelines:
+                input_pipeline_config = input_pipeline.create_pipeline_config(file)
+                input_dirs.append(input_pipeline_config.get_base_dir())
+
+        pipeline = PipelineEvaluationInstance.create_pipeline(
+            self.config,
+            self.pipeline_dir,
+            input_dirs,
+            file,
+            stages,
+        )
 
         assert pipeline.config.output_dir == self.get_pipeline_dir(file)
 
@@ -126,13 +150,17 @@ class PipelineEvaluationInstance:
 
     @staticmethod
     def create_pipeline(
-        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[PipelineStage]]
+        config: PipelineConfig,
+        output_dir: Path,
+        input_dirs: Optional[List[Path]],
+        file: Path,
+        stages: Optional[List[PipelineStage]],
     ) -> Pipeline:
         pipeline: Pipeline = PipelineEvaluationInstance.configure_pipeline(config, output_dir, file, stages).setup(
             local_rank=0, world_size=1
         )
 
-        pipeline.init()
+        pipeline.init(input_dirs=input_dirs)
 
         config.print_to_terminal()
         config.save_config()
