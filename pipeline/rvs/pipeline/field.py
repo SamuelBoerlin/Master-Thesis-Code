@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional, Type
@@ -12,8 +10,8 @@ from nerfstudio.models.base_model import ModelConfig
 from numpy.typing import NDArray
 from torch import Tensor
 
-import rvs.pipeline.pipeline
 from rvs.pipeline.model import WrapperModelConfig
+from rvs.pipeline.state import PipelineState
 from rvs.pipeline.training_controller import TrainingController, TrainingControllerConfig
 
 
@@ -39,7 +37,7 @@ class Field:
 
     def init(
         self,
-        pipeline_state: rvs.pipeline.pipeline.Pipeline.State,
+        pipeline_state: PipelineState,
         data_path: Optional[Path],
         output_dir: Optional[Path],
         load_from_checkpoint: bool = False,

@@ -80,6 +80,9 @@ class EvaluationConfig(InstantiateConfig):
     timestamp: str = "{timestamp}"
     """Evaluation/experiment timestamp."""
 
+    seed: int = 42
+    """Seed used for random operations"""
+
     # FIXME Config is fixed, re-implement this
     # embedder: EmbedderConfig = field(defaulut_factory=lambda: EmbedderConfig)
     # """Configuration of the CLIP embedder used for the precision/recall/accuracy evaluation"""
@@ -231,7 +234,8 @@ class Evaluation:
         input_eval: Evaluation = input_config.setup()
 
         instance = PipelineEvaluationInstance(
-            input_eval.__configure_pipeline(input_eval.config.pipeline), intermediate_dir
+            Evaluation.__configure_pipeline(input_eval.config),
+            intermediate_dir,
         )
 
         if not instance.pipeline_dir.exists():
@@ -258,7 +262,7 @@ class Evaluation:
         ) as progress_logger_handle:
             run = EvaluationRun(
                 instance=PipelineEvaluationInstance(
-                    self.__configure_pipeline(self.config.pipeline),
+                    Evaluation.__configure_pipeline(self.config),
                     self.intermediate_dir,
                     input_pipelines=self.input_pipelines,
                 ),
@@ -278,7 +282,13 @@ class Evaluation:
             if aborted:
                 return False
 
-            evaluate_results(self.lvis, self.embedder, run.instance, self.results_dir)
+            evaluate_results(
+                self.lvis,
+                self.embedder,
+                run.instance,
+                self.config.seed,
+                self.results_dir,
+            )
 
             return True
 
@@ -568,11 +578,13 @@ class Evaluation:
         except Exception:
             return str(file)
 
-    def __configure_pipeline(self, config: PipelineConfig) -> PipelineConfig:
-        config = replace(config)
-        config.timestamp = self.config.timestamp
-        config.set_timestamp()
-        return config
+    @staticmethod
+    def __configure_pipeline(eval_config: EvaluationConfig) -> PipelineConfig:
+        pipeline_config = replace(eval_config.pipeline)
+        pipeline_config.timestamp = eval_config.timestamp
+        pipeline_config.set_timestamp()
+        pipeline_config.machine.seed = eval_config.seed
+        return pipeline_config
 
 
 @dataclass

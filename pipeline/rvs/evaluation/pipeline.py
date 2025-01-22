@@ -15,6 +15,8 @@ INDEX_FILE_NAME = "index.json"
 
 
 class PipelineEvaluationInstance:
+    from rvs.pipeline.state import PipelineState
+
     output_dir: Path
 
     config: PipelineConfig
@@ -77,7 +79,7 @@ class PipelineEvaluationInstance:
         torch.cuda.empty_cache()
 
     @staticmethod
-    def save_results(results: Pipeline.State, output_dir: Path, file: Path) -> Optional[Path]:
+    def save_results(results: PipelineState, output_dir: Path, file: Path) -> Optional[Path]:
         output_dir = output_dir / file.name
         output_dir.mkdir(parents=True, exist_ok=True)
 

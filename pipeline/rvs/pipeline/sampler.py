@@ -9,6 +9,7 @@ from trimesh import triangles
 from trimesh.scene import Scene
 from trimesh.typed import Integer, NDArray, Number, Optional
 
+from rvs.pipeline.state import PipelineState
 from rvs.utils.trimesh import normalize_scene
 
 
@@ -29,7 +30,7 @@ class PositionSampler:
     def __init__(self, config: PositionSamplerConfig):
         self.config = config
 
-    def sample(self, file: Path) -> NDArray:
+    def sample(self, file: Path, pipeline_state: PipelineState) -> NDArray:
         pass
 
 
@@ -39,7 +40,7 @@ class TrimeshPositionSamplerConfig(PositionSamplerConfig):
 
 
 class TrimeshPositionSampler(PositionSampler):
-    def sample(self, file: Path) -> NDArray:
+    def sample(self, file: Path, pipeline_state: PipelineState) -> NDArray:
         obj = trimesh.load(file)
 
         if not isinstance(obj, Scene):
@@ -70,7 +71,12 @@ class TrimeshPositionSampler(PositionSampler):
         areas = triangles.area(crosses=triangles.cross(tris))
 
         positions, _ = self.__sample_surface_even(
-            vertices, faces, self.config.num_samples, face_weight=areas, radius=self.config.min_distance, seed=None
+            vertices,
+            faces,
+            self.config.num_samples,
+            face_weight=areas,
+            radius=self.config.min_distance,
+            seed=pipeline_state.pipeline.config.machine.seed,
         )
 
         return positions
@@ -168,7 +174,13 @@ class TrimeshPositionSampler(PositionSampler):
     ) -> NDArray:
         from trimesh.points import remove_close
 
-        points, index = self.__sample_surface(vertices, faces, count * 3, face_weight=face_weight, seed=seed)
+        points, index = self.__sample_surface(
+            vertices,
+            faces,
+            count * 3,
+            face_weight=face_weight,
+            seed=seed,
+        )
 
         points, mask = remove_close(points, radius)
 

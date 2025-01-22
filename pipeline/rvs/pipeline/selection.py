@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import List, Type
 
@@ -12,8 +10,8 @@ from nerfstudio.data.datamanagers.base_datamanager import DataManager
 from numpy.typing import NDArray
 from torch import Tensor
 
-import rvs.pipeline.pipeline
 from rvs.pipeline.renderer import View
+from rvs.pipeline.state import PipelineState
 
 
 @dataclass
@@ -27,7 +25,7 @@ class ViewSelection:
     def __init__(self, config: ViewSelectionConfig):
         self.config = config
 
-    def select(self, clusters: NDArray, pipeline_state: rvs.pipeline.pipeline.Pipeline.State) -> List[View]:
+    def select(self, clusters: NDArray, pipeline_state: PipelineState) -> List[View]:
         pass
 
 
@@ -37,7 +35,7 @@ class BestTrainingViewSelectionConfig(ViewSelectionConfig):
 
 
 class BestTrainingViewSelection(ViewSelection):
-    def select(self, clusters: NDArray, pipeline_state: rvs.pipeline.pipeline.Pipeline.State) -> List[View]:
+    def select(self, clusters: NDArray, pipeline_state: PipelineState) -> List[View]:
         num_clusters = clusters.shape[0]
         if num_clusters <= 0:
             return []

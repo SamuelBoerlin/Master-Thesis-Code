@@ -6,6 +6,8 @@ import numpy as np
 from nerfstudio.configs.base_config import InstantiateConfig
 from numpy.typing import NDArray
 
+from rvs.pipeline.state import PipelineState
+
 
 @dataclass
 class ViewsConfig(InstantiateConfig):
@@ -30,7 +32,7 @@ class Views:
     def __init__(self, config: ViewsConfig) -> None:
         self.config = config
 
-    def generate(self) -> List[View]:
+    def generate(self, pipeline_state: PipelineState) -> List[View]:
         return []
 
 
@@ -66,7 +68,7 @@ class SphereViews(Views):
     def __init__(self, config: SphereViewsConfig) -> None:
         self.config = config
 
-    def generate(self) -> List[View]:
+    def generate(self, pipeline_state: PipelineState) -> List[View]:
         views = []
 
         for i in range(0, self.config.azimuth_views):

@@ -8,7 +8,6 @@ from typing import Any, List, Optional, Set, Type
 import numpy as np
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.utils.rich_utils import CONSOLE
-from numpy.typing import NDArray
 from PIL import Image as im
 
 from rvs.pipeline.clustering import Clustering, ClusteringConfig
@@ -17,6 +16,7 @@ from rvs.pipeline.io import PipelineIO
 from rvs.pipeline.renderer import Renderer, RendererConfig
 from rvs.pipeline.sampler import PositionSampler, PositionSamplerConfig
 from rvs.pipeline.selection import ViewSelection, ViewSelectionConfig
+from rvs.pipeline.state import PipelineState
 from rvs.pipeline.views import View, Views, ViewsConfig
 from rvs.utils.console import file_link
 from rvs.utils.debug import render_sample_clusters, render_sample_positions
@@ -153,12 +153,12 @@ class Pipeline:
 
         self.selection = self.config.selection.setup()
 
-    def run(self) -> "Pipeline.State":
-        pipeline_state = Pipeline.State(self)
+    def run(self) -> "PipelineState":
+        pipeline_state = PipelineState(self)
 
         if self.should_run_stage(PipelineStage.SAMPLE_VIEWS):
             CONSOLE.log("Generating view transforms...")
-            pipeline_state.training_views = self.views.generate()
+            pipeline_state.training_views = self.views.generate(pipeline_state)
             transforms_path = self.__save_transforms(pipeline_state)
         elif self.should_load_stage(PipelineStage.SAMPLE_VIEWS):
             CONSOLE.log("Loading view transforms...")
@@ -178,7 +178,7 @@ class Pipeline:
 
         if self.should_run_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Sampling positions...")
-            pipeline_state.sample_positions = self.sampler.sample(self.config.model_file)
+            pipeline_state.sample_positions = self.sampler.sample(self.config.model_file, pipeline_state)
             self.__save_sample_positions(pipeline_state)
 
             if self.config.render_sample_positions_of_views is not None:
@@ -236,7 +236,7 @@ class Pipeline:
 
         if self.should_run_stage(PipelineStage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Clustering embeddings...")
-            pipeline_state.sample_clusters = self.clustering.cluster(pipeline_state.sample_embeddings)
+            pipeline_state.sample_clusters = self.clustering.cluster(pipeline_state.sample_embeddings, pipeline_state)
             self.__save_clusters(pipeline_state)
 
             if self.config.render_sample_clusters_of_views is not None:
@@ -297,7 +297,7 @@ class Pipeline:
     def should_load_stage(self, stage: "PipelineStage") -> bool:
         return self.config.stages is None or stage.required_by(self.config.stages)
 
-    def __save_transforms(self, state: "Pipeline.State") -> Path:
+    def __save_transforms(self, state: "PipelineState") -> Path:
         path = save_transforms_json(
             self.__io.get_output_path(self.__renderer_output_dir),
             state.training_views,
@@ -309,7 +309,7 @@ class Pipeline:
         CONSOLE.log(f"Saved views transforms to {file_link(path)}")
         return path
 
-    def __load_transforms(self, state: "Pipeline.State") -> Path:
+    def __load_transforms(self, state: "PipelineState") -> Path:
         try:
             path, views, fl_x, fl_y, w, h = self.__io.load_input(
                 self.__renderer_output_dir, lambda path: load_transforms_json(path)
@@ -326,7 +326,7 @@ class Pipeline:
         CONSOLE.log(f"Saved view {view.index} to {file_link(path)}")
         return path
 
-    def __load_view_paths(self, state: "Pipeline.State") -> None:
+    def __load_view_paths(self, state: "PipelineState") -> None:
         try:
             for view in state.training_views:
                 self.__set_view_path(view, output=False)
@@ -347,13 +347,13 @@ class Pipeline:
             else:
                 raise FileNotFoundError(f"View image {path} not found")
 
-    def __save_sample_positions(self, state: "Pipeline.State") -> Path:
+    def __save_sample_positions(self, state: "PipelineState") -> Path:
         path = self.__io.get_output_path(self.__sampler_output_dir / "positions.json")
         with path.open("w") as f:
             json.dump(state.sample_positions.tolist(), f)
         CONSOLE.log(f"Saved positions to {file_link(path)}")
 
-    def __load_sample_positions(self, state: "Pipeline.State") -> Path:
+    def __load_sample_positions(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__sampler_output_dir / "positions.json")
         try:
             with path.open("r") as f:
@@ -364,13 +364,13 @@ class Pipeline:
             CONSOLE.log("Failed loading positions:")
             raise ex
 
-    def __save_sample_embeddings(self, state: "Pipeline.State") -> Path:
+    def __save_sample_embeddings(self, state: "PipelineState") -> Path:
         path = self.__io.get_output_path(self.__embedding_output_dir / "embeddings.json")
         with path.open("w") as f:
             json.dump(state.sample_embeddings.tolist(), f)
         CONSOLE.log(f"Saved embeddings to {file_link(path)}")
 
-    def __load_sample_embeddings(self, state: "Pipeline.State") -> Path:
+    def __load_sample_embeddings(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__embedding_output_dir / "embeddings.json")
         try:
             with path.open("r") as f:
@@ -381,13 +381,13 @@ class Pipeline:
             CONSOLE.log("Failed loading embeddings:")
             raise ex
 
-    def __save_clusters(self, state: "Pipeline.State") -> Path:
+    def __save_clusters(self, state: "PipelineState") -> Path:
         path = self.__io.get_output_path(self.__clustering_output_dir / "clusters.json")
         with path.open("w") as f:
             json.dump(state.sample_clusters.tolist(), f)
         CONSOLE.log(f"Saved clusters to {file_link(path)}")
 
-    def __load_clusters(self, state: "Pipeline.State") -> Path:
+    def __load_clusters(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__clustering_output_dir / "clusters.json")
         try:
             with path.open("r") as f:
@@ -397,17 +397,6 @@ class Pipeline:
         except Exception as ex:
             CONSOLE.log("Failed loading clusters:")
             raise ex
-
-    class State:
-        pipeline: "Pipeline"
-        training_views: Optional[List[View]] = None
-        sample_positions: Optional[NDArray] = None
-        sample_embeddings: Optional[NDArray] = None
-        sample_clusters: Optional[NDArray] = None
-        selected_views: Optional[List[View]] = None
-
-        def __init__(self, pipeline: "Pipeline") -> None:
-            self.pipeline = pipeline
 
 
 class PipelineStage(str, Enum):

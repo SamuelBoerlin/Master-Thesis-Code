@@ -40,7 +40,11 @@ from rvs.evaluation.pipeline import PipelineEvaluationInstance
 
 
 def evaluate_results(
-    lvis: LVISDataset, embedder: Embedder, instance: PipelineEvaluationInstance, output_dir: Path
+    lvis: LVISDataset,
+    embedder: Embedder,
+    instance: PipelineEvaluationInstance,
+    seed: int,
+    output_dir: Path,
 ) -> None:
     CONSOLE.rule("Embedding prompts for categories...")
     categories_embeddings = embed_categories(lvis.dataset.keys(), embedder)
@@ -67,7 +71,7 @@ def evaluate_results(
         available_uids,
         embedder,
         instance,
-        np.random.default_rng(seed=238947978),
+        np.random.default_rng(seed=seed),
         number_of_views,
     )
     available_uids = avg_selected_views_embeddings.keys()
@@ -179,7 +183,7 @@ def evaluate_results(
             available_uids,
             category,
             instance,
-            np.random.default_rng(seed=238947978),
+            np.random.default_rng(seed=seed),
             5 * 5,
             output_dir / "views" / f"{category}.png",
         )

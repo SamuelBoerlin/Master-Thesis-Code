@@ -6,6 +6,8 @@ from nerfstudio.configs.base_config import InstantiateConfig
 from scipy.cluster.vq import kmeans, whiten
 from trimesh.typed import NDArray
 
+from rvs.pipeline.state import PipelineState
+
 
 @dataclass
 class ClusteringConfig(InstantiateConfig):
@@ -21,7 +23,7 @@ class Clustering:
     def __init__(self, config: ClusteringConfig):
         self.config = config
 
-    def cluster(self, samples: NDArray) -> NDArray:
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> NDArray:
         pass
 
 
@@ -36,7 +38,7 @@ class KMeansClusteringConfig(ClusteringConfig):
 class KMeansClustering(Clustering):
     config: KMeansClusteringConfig
 
-    def cluster(self, samples: NDArray) -> NDArray:
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> NDArray:
         std_dev: NDArray = None
 
         if self.config.whitening:
@@ -45,7 +47,11 @@ class KMeansClustering(Clustering):
             std_dev = samples.std(axis=0)
             samples /= std_dev
 
-        centroids, _ = kmeans(samples, self.config.num_clusters)
+        centroids, _ = kmeans(
+            samples,
+            self.config.num_clusters,
+            seed=pipeline_state.pipeline.config.machine.seed,
+        )
 
         if self.config.whitening and std_dev is not None:
             # Undo "whitening"
