@@ -86,9 +86,8 @@ class EvaluationConfig(InstantiateConfig):
     seed: int = 42
     """Seed used for random operations"""
 
-    # FIXME Config is fixed, re-implement this
-    # embedder: EmbedderConfig = field(defaulut_factory=lambda: EmbedderConfig)
-    # """Configuration of the CLIP embedder used for the precision/recall/accuracy evaluation"""
+    embedder: EmbedderConfig = field(default_factory=EmbedderConfig)
+    """Configuration of the CLIP embedder used for the precision/recall/accuracy evaluation"""
 
     runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
     """Runtime settings that do not affect the results"""
@@ -169,7 +168,7 @@ class Evaluation:
         self.input_pipelines = self.__setup_inputs()
 
         CONSOLE.log("Setting up embedder...")
-        self.embedder = EmbedderConfig().setup()
+        self.embedder = self.config.embedder.setup()
 
         CONSOLE.log("Setting up dataset...")
         self.lvis = LVISDataset(
@@ -362,7 +361,7 @@ class Evaluation:
                 # Runtime data should be ignored in comparison except for validated metadata
                 # so replace with new metadata and keep old validated metadata if it exists
                 existing_validated_metadata = self.__get_nested_metadata(existing_config, "validated")
-                existing_config = replace(existing_config, runtime=replace(new_config.runtime))
+                existing_config.runtime = replace(new_config.runtime)
                 existing_config.runtime.metadata = dict(new_config.runtime.metadata)
                 self.__set_nested_metadata(existing_config, "validated", existing_validated_metadata)
             except Exception as ex:
