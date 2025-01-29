@@ -3,7 +3,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, TypeVar, Union
 
 import yaml
 from git import Repo
@@ -50,6 +50,9 @@ class RuntimeSettings(PrintableConfig):
 
     results_only: bool = False
     """Run results part only"""
+
+    set_read_only: bool = None
+    """Sets the data to be read-only and exists immediately after if flag set"""
 
 
 @dataclass
@@ -134,10 +137,13 @@ class Evaluation:
         if overrides is not None:
             self.config = replace(overrides(self.config))
 
-        self.__set_validated_metadata_key(
+        self.__set_nested_metadata_key(
             self.config,
+            "validated",
             "tracking",
-            self.__populate_tracking_metadata(self.__get_validated_metadata_key(self.config, "tracking")),
+            self.__populate_tracking_metadata(
+                self.__get_nested_metadata_key(self.config, "validated", "tracking", dict())
+            ),
         )
 
         # Always persist metadata
@@ -248,6 +254,9 @@ class Evaluation:
 
         saved_config = replace(self.config_base)
 
+        if self.config.runtime.set_read_only is not None:
+            self.__set_nested_metadata_key(saved_config, "mode", "read_only", self.config.runtime.set_read_only)
+
         CONSOLE.log("Validating config...")
         self.__validate_eval_config(saved_config, self.config.output_dir / "config.yaml")
 
@@ -255,6 +264,20 @@ class Evaluation:
 
         CONSOLE.log("Saving config...")
         self.__save_eval_config(saved_config, [self.config.output_dir / "config.yaml", run_dir / "config.yaml"])
+
+        if self.config.runtime.set_read_only is not None:
+            CONSOLE.log(f"Data read-only mode set to {str(self.config.runtime.set_read_only)}...")
+            return False
+
+        is_read_only = self.config.runtime.set_read_only or self.__get_nested_metadata_key(
+            self.config, "mode", "read_only", False
+        )
+
+        if is_read_only and not self.config.runtime.results_only:
+            CONSOLE.log(
+                "[bold red]ERROR: Data is read-only. Disable with runtime.set_read_only=False or use runtime.results_only=True."
+            )
+            return False
 
         CONSOLE.log("Starting runs...")
         with create_logger(
@@ -274,6 +297,7 @@ class Evaluation:
             aborted = False
 
             if not self.config.runtime.results_only:
+                assert not is_read_only
                 if self.config.runtime.stage_by_stage:
                     aborted = not self.__run_stage_by_stage(run)
                 else:
@@ -337,12 +361,14 @@ class Evaluation:
                 existing_config = load_config(file, EvaluationConfig, default_config_factory=None)
                 # Runtime data should be ignored in comparison except for validated metadata
                 # so replace with new metadata and keep old validated metadata if it exists
-                existing_validated_metadata = self.__get_validated_metadata(existing_config)
+                existing_validated_metadata = self.__get_nested_metadata(existing_config, "validated")
                 existing_config = replace(existing_config, runtime=replace(new_config.runtime))
                 existing_config.runtime.metadata = dict(new_config.runtime.metadata)
-                self.__set_validated_metadata(existing_config, existing_validated_metadata)
+                self.__set_nested_metadata(existing_config, "validated", existing_validated_metadata)
             except Exception as ex:
-                err_msg = f'Unable to validate existing config "{file}" Run with override_existing=True to override.'
+                err_msg = (
+                    f'Unable to validate existing config "{file}" Run with runtime.override_existing=True to override.'
+                )
                 CONSOLE.log(f"{prefix}{err_msg}")
                 if fail_on_difference:
                     raise Exception(err_msg) from ex
@@ -384,7 +410,7 @@ class Evaluation:
             if not matches:
                 err_msg = f'Existing config "{file}" does not match.'
                 if fail_on_difference:
-                    err_msg += " Run with override_existing=True to override."
+                    err_msg += " Run with runtime.override_existing=True to override."
                 CONSOLE.log(f"{prefix}{err_msg}")
                 if fail_on_difference:
                     raise Exception(err_msg)
@@ -407,32 +433,34 @@ class Evaluation:
 
         return (config, removed)
 
-    def __get_validated_metadata(self, config: EvaluationConfig) -> Dict[str, str]:
-        if config.runtime.metadata is not None and "validated" in config.runtime.metadata:
-            validated_metadata = config.runtime.metadata["validated"]
-            if isinstance(validated_metadata, Dict):
-                return validated_metadata
+    def __get_nested_metadata(self, config: EvaluationConfig, group: str) -> Dict[str, str]:
+        if config.runtime.metadata is not None and group in config.runtime.metadata:
+            nested_metadata = config.runtime.metadata[group]
+            if isinstance(nested_metadata, Dict):
+                return nested_metadata
         return dict()
 
-    def __get_validated_metadata_key(self, config: EvaluationConfig, key: str) -> Dict[str, str]:
-        metadata = self.__get_validated_metadata(config)
+    T = TypeVar("T")
+
+    def __get_nested_metadata_key(self, config: EvaluationConfig, group: str, key: str, default: T) -> T:
+        metadata = self.__get_nested_metadata(config, group)
         if key in metadata:
-            map = metadata[key]
-            if isinstance(map, Dict):
-                return map
-        return dict()
+            value = metadata[key]
+            if isinstance(value, type(default)):
+                return value
+        return default
 
-    def __set_validated_metadata(self, config: EvaluationConfig, metadata: Dict[str, str]) -> None:
+    def __set_nested_metadata(self, config: EvaluationConfig, group: str, metadata: Dict[str, str]) -> None:
         if config.runtime.metadata is None:
             config.runtime.metadata = dict()
-        config.runtime.metadata["validated"] = metadata
+        config.runtime.metadata[group] = metadata
 
-    def __set_validated_metadata_key(self, config: EvaluationConfig, key: str, metadata: Dict[str, str]) -> None:
-        validated_metadata = self.__get_validated_metadata(config)
-        validated_metadata[key] = metadata
+    def __set_nested_metadata_key(self, config: EvaluationConfig, group: str, key: str, metadata: Any) -> None:
+        nested_metadata = self.__get_nested_metadata(config, group)
+        nested_metadata[key] = metadata
         if config.runtime.metadata is None:
             config.runtime.metadata = dict()
-        config.runtime.metadata["validated"] = validated_metadata
+        config.runtime.metadata[group] = nested_metadata
 
     def __run_stage_by_stage(self, run: EvaluationRun) -> bool:
         stages = PipelineStage.between(

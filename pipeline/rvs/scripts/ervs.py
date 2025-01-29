@@ -1,5 +1,7 @@
 import os
 
+import click
+
 # TODO: This should probably be elsewhere
 # Required for headless rendering with pyrenderer and trimesh
 os.environ["PYOPENGL_PLATFORM"] = "egl"
@@ -11,6 +13,7 @@ from typing import Any, Callable, Optional
 
 import tyro
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
+from nerfstudio.utils.rich_utils import CONSOLE
 
 from rvs.configs.evaluation_configs import AnnotatedBaseConfigUnion
 from rvs.evaluation.evaluation import Evaluation, EvaluationConfig, EvaluationResumeConfig
@@ -53,7 +56,14 @@ def run_evaluation(
     overrides: Optional[Callable[[EvaluationConfig], EvaluationConfig]] = None,
 ) -> None:
     eval: Evaluation = config.setup(overrides=overrides)
+
     eval.init()
+
+    if eval.config.runtime.set_read_only is not None and not eval.config.runtime.set_read_only:
+        CONSOLE.log("[bold yellow]WARNING: Are you sure you want to disable read-only mode?")
+        if not click.confirm(""):
+            return
+
     eval.run()
 
 
