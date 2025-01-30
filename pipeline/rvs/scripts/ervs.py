@@ -64,6 +64,11 @@ def run_evaluation(
         if not click.confirm(""):
             return
 
+    if eval.config.runtime.override_existing:
+        CONSOLE.log("[bold yellow]WARNING: Are you sure you want to override the existing config?")
+        if not click.confirm(""):
+            return
+
     eval.run()
 
 

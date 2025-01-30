@@ -314,8 +314,10 @@ def elbow_plot(
     ylabel: str = None,
     pred_point: bool = True,
     pred_frac_point: bool = True,
-    hlines: bool = True,
-    vlines: bool = True,
+    pred_hlines: bool = True,
+    pred_vlines: bool = True,
+    pred_frac_hlines: bool = True,
+    pred_frac_vlines: bool = True,
     colors: List[Any] = "auto",
 ) -> None:
     if isinstance(elbow, Elbow):
@@ -350,13 +352,17 @@ def elbow_plot(
     ylim = ax.get_ylim()
 
     for e in elbow:
-        if hlines:
-            ax.hlines(e.pred_frac_k_d, -1000, e.pred_frac_k, color="gray", linestyle="--", alpha=0.5)
-            ax.hlines(e.pred_k_d, -1000, e.pred_k, color="gray", linestyle="--", alpha=0.5)
+        if pred_frac_hlines:
+            ax.hlines(e.pred_frac_k_d, -1000, e.pred_frac_k, color="gray", linestyle="--", alpha=0.5, zorder=0)
 
-        if vlines:
-            ax.vlines(e.pred_frac_k, -1000, e.pred_frac_k_d, color="gray", linestyle="--", alpha=0.5)
-            ax.vlines(e.pred_k, -1000, e.pred_k_d, color="gray", linestyle="--", alpha=0.5)
+        if pred_hlines:
+            ax.hlines(e.pred_k_d, -1000, e.pred_k, color="gray", linestyle="--", alpha=0.5, zorder=0)
+
+        if pred_frac_vlines:
+            ax.vlines(e.pred_frac_k, -1000, e.pred_frac_k_d, color="gray", linestyle="--", alpha=0.5, zorder=0)
+
+        if pred_vlines:
+            ax.vlines(e.pred_k, -1000, e.pred_k_d, color="gray", linestyle="--", alpha=0.5, zorder=0)
 
     if xlabel is not None:
         ax.set_xlabel(xlabel)

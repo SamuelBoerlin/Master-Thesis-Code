@@ -137,6 +137,9 @@ def plot_elbows_samples(
     elbow_plot(
         ax,
         samples,
+        pred_frac_point=False,
+        pred_frac_hlines=False,
+        pred_frac_vlines=False,
         xlabel="Number of clusters",
         ylabel="Distortion",
     )
