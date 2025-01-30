@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 import tyro
 
-from rvs.configs.pipeline_configs import pipeline_configs
+from rvs.configs.pipeline_configs import pipeline_configs, pipeline_descriptions
 from rvs.evaluation.evaluation import EvaluationConfig, EvaluationResumeConfig
 from rvs.pipeline.pipeline import PipelineConfig
 
@@ -16,26 +16,16 @@ def adapt_pipeline_config(config: PipelineConfig) -> PipelineConfig:
     return config
 
 
-evaluation_configs: Dict[str, Any] = {}
-evaluation_descriptions = {
-    "default": "Default model.",
-    "default-lite": "Default big model.",
-    "default-big": "Default lite model.",
-    "resume": "Resume evaluation.",
-}
+evaluation_configs: Dict[str, Any] = dict()
+evaluation_descriptions: Dict[str, str] = dict()
 
-evaluation_configs["default"] = EvaluationConfig(
-    pipeline=adapt_pipeline_config(pipeline_configs["default"]),
-)
+for name, config in pipeline_configs.items():
+    evaluation_descriptions[name] = pipeline_descriptions[name]
+    evaluation_configs[name] = EvaluationConfig(
+        pipeline=adapt_pipeline_config(config),
+    )
 
-evaluation_configs["default-lite"] = EvaluationConfig(
-    pipeline=adapt_pipeline_config(pipeline_configs["default-lite"]),
-)
-
-evaluation_configs["default-big"] = EvaluationConfig(
-    pipeline=adapt_pipeline_config(pipeline_configs["default-big"]),
-)
-
+evaluation_descriptions["resume"] = "Resume evaluation"
 evaluation_configs["resume"] = EvaluationResumeConfig(config=None)
 
 all_methods, all_descriptions = evaluation_configs, evaluation_descriptions

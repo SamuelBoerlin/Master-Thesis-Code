@@ -5,11 +5,14 @@ import numpy as np
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.cm import get_cmap
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Bbox
 from numpy.typing import NDArray
 from PIL import Image as im
+
+from rvs.utils.elbow import Elbow
 
 Precision = NewType("Precision", NDArray)
 Recall = NewType("Recall", NDArray)
@@ -234,6 +237,9 @@ def image_grid_plot(
     if isinstance(axes, Axes):
         axes = [[axes]]
 
+    if isinstance(axes[0], Axes):
+        axes = [axes]
+
     i = 0
 
     for r in range(rows):
@@ -281,3 +287,81 @@ def image_grid_plot(
             i += 1
 
     return axes
+
+
+def cluster_colors(num_clusters: int) -> List[Any]:
+    assert num_clusters >= 0
+    if num_clusters == 0:
+        return []
+    elif num_clusters <= 3:
+        return [
+            np.array([1.0, 0.0, 0.0]),
+            np.array([0.0, 0.0, 1.0]),
+            np.array([0.0, 1.0, 0.0]),
+        ][:num_clusters]
+    elif num_clusters <= 10:
+        cmap = get_cmap("tab10")
+        return [cmap(i) for i in range(num_clusters)]
+    else:
+        cmap = get_cmap("gist_rainbow", num_clusters)
+        return [cmap(i) for i in range(num_clusters)]
+
+
+def elbow_plot(
+    ax: Axes,
+    elbow: Union[Elbow, List[Elbow]],
+    xlabel: str = None,
+    ylabel: str = None,
+    pred_point: bool = True,
+    pred_frac_point: bool = True,
+    hlines: bool = True,
+    vlines: bool = True,
+    colors: List[Any] = "auto",
+) -> None:
+    if isinstance(elbow, Elbow):
+        elbow = [elbow]
+
+    if colors == "auto":
+        if len(elbow) > 1:
+            colors = cluster_colors(len(elbow))
+        else:
+            colors = None
+
+    if colors is not None and len(colors) != len(elbow):
+        raise ValueError("len(colors) != len(elbow)")
+
+    for i, e in enumerate(elbow):
+        color = "C0"
+        if colors is not None:
+            color = colors[i]
+
+        ax.plot(e.ks, e.ds, color=color)
+
+        if pred_frac_point:
+            ax.plot(e.pred_frac_k, e.pred_frac_k_d, "o", color=color, fillstyle="none")
+
+        if pred_point:
+            ax.plot(e.pred_k, e.pred_k_d, "o", color=color, fillstyle="full")
+
+        # FIXME
+        # ax.set_xticks(e.ks)
+
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+
+    for e in elbow:
+        if hlines:
+            ax.hlines(e.pred_frac_k_d, -1000, e.pred_frac_k, color="gray", linestyle="--", alpha=0.5)
+            ax.hlines(e.pred_k_d, -1000, e.pred_k, color="gray", linestyle="--", alpha=0.5)
+
+        if vlines:
+            ax.vlines(e.pred_frac_k, -1000, e.pred_frac_k_d, color="gray", linestyle="--", alpha=0.5)
+            ax.vlines(e.pred_k, -1000, e.pred_k_d, color="gray", linestyle="--", alpha=0.5)
+
+    if xlabel is not None:
+        ax.set_xlabel(xlabel)
+    ax.set_xlim(xlim)
+
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    ax.set_ylim(ylim)

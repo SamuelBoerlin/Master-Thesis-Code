@@ -1,8 +1,10 @@
 import json
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
+from matplotlib import pyplot as plt
+from numpy.random import Generator
 from numpy.typing import NDArray
 from tqdm import tqdm
 
@@ -14,6 +16,8 @@ from rvs.evaluation.analysis.histogram import (
 )
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
+from rvs.utils.elbow import Elbow, load_elbow
+from rvs.utils.plot import elbow_plot, save_figure
 
 
 def count_clusters(
@@ -90,3 +94,53 @@ def plot_clusters_histogram(
         category_names=category_names,
         category_filter=category_filter,
     )
+
+
+def plot_elbows_samples(
+    lvis: LVISDataset,
+    uids: Set[Uid],
+    category: Category,
+    instance: PipelineEvaluationInstance,
+    rng: Generator,
+    number_of_samples: int,
+    file: Path,
+    category_names: Optional[Dict[Category, str]] = None,
+) -> None:
+    category_name = category_names[category] if category_names is not None else category
+
+    samples: List[Elbow] = []
+
+    selection_rng = np.random.default_rng(seed=rng)
+
+    all_elbows: List[Tuple[Path, Uid]] = []
+
+    for uid in lvis.dataset[category]:
+        if uid in uids:
+            model_file = Path(lvis.uid_to_file[uid])
+
+            elbow_file = (
+                instance.create_pipeline_config(model_file).get_base_dir() / "clustering" / "scratch" / "elbow.json"
+            )
+
+            if elbow_file.exists() and elbow_file.is_file():
+                all_elbows.append((elbow_file, uid))
+
+    selection_rng.shuffle(all_elbows)
+
+    for elbow_file, uid in all_elbows[:number_of_samples]:
+        samples.append(load_elbow(elbow_file))
+
+    fig, ax = plt.subplots()
+
+    ax.set_title(f'Random Sample of Cluster Distortion for Objaverse 1.0 LVIS Category\n"{category_name}"')
+
+    elbow_plot(
+        ax,
+        samples,
+        xlabel="Number of clusters",
+        ylabel="Distortion",
+    )
+
+    fig.tight_layout()
+
+    save_figure(fig, file)

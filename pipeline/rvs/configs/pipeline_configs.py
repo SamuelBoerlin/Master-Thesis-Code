@@ -10,7 +10,7 @@ from nerfstudio.engine.trainer import TrainerConfig
 
 from rvs.lerf.lerf_datamanager import CustomLERFDataManagerConfig
 from rvs.lerf.lerf_model import CustomLERFModelConfig
-from rvs.pipeline.clustering import KMeansClusteringConfig
+from rvs.pipeline.clustering import ElbowKMeansClusteringConfig, KMeansClusteringConfig
 from rvs.pipeline.pipeline import FieldConfig, PipelineConfig
 from rvs.pipeline.renderer import TrimeshRendererConfig
 from rvs.pipeline.sampler import TrimeshPositionSamplerConfig
@@ -62,6 +62,7 @@ pipeline_descriptions = {
     "default": "Default model.",
     "default-lite": "Default big model.",
     "default-big": "Default lite model.",
+    "elbow_kmeans": "Default model with elbow kmeans.",
 }
 
 pipeline_configs["default"] = PipelineConfig(
@@ -91,6 +92,16 @@ pipeline_configs["default-big"] = PipelineConfig(
     field=FieldConfig(trainer=adapt_lerf_config(lerf_method_big.config)),
     sampler=TrimeshPositionSamplerConfig(),
     clustering=KMeansClusteringConfig(),
+    selection=BestTrainingViewSelectionConfig(),
+)
+
+pipeline_configs["elbow_kmeans"] = PipelineConfig(
+    method_name="elbow_kmeans",
+    views=SphereViewsConfig(),
+    renderer=TrimeshRendererConfig(),
+    field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
+    sampler=TrimeshPositionSamplerConfig(),
+    clustering=ElbowKMeansClusteringConfig(),
     selection=BestTrainingViewSelectionConfig(),
 )
 

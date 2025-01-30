@@ -174,7 +174,6 @@ class PipelineEvaluationInstance:
         config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[PipelineStage]]
     ) -> PipelineConfig:
         config.output_dir = output_dir / file.name
-        config.experiment_name = "evaluation"
         config.model_file = file
         config.stages = stages
         return config

@@ -80,9 +80,6 @@ class EvaluationConfig(InstantiateConfig):
     inputs: Optional[List[Path]] = None
     """Inputs (paths to evaluation configs) to be used to load data from other evaluations for stages that haven't been processed in this evaluation. Sources later in the list take precendece over sources earlier in the list."""
 
-    timestamp: str = "{timestamp}"
-    """Evaluation/experiment timestamp."""
-
     seed: int = 42
     """Seed used for random operations"""
 
@@ -252,6 +249,8 @@ class Evaluation:
         CONSOLE.rule("Running evaluation...")
 
         saved_config = replace(self.config_base)
+
+        self.__set_nested_metadata_key(saved_config, "run", "timestamp", datetime.now().strftime("%Y-%m-%d_%H%M%S"))
 
         if self.config.runtime.set_read_only is not None:
             self.__set_nested_metadata_key(saved_config, "mode", "read_only", self.config.runtime.set_read_only)
@@ -449,7 +448,7 @@ class Evaluation:
                 return value
         return default
 
-    def __set_nested_metadata(self, config: EvaluationConfig, group: str, metadata: Dict[str, str]) -> None:
+    def __set_nested_metadata(self, config: EvaluationConfig, group: str, metadata: Any) -> None:
         if config.runtime.metadata is None:
             config.runtime.metadata = dict()
         config.runtime.metadata[group] = metadata
@@ -608,8 +607,10 @@ class Evaluation:
     @staticmethod
     def __configure_pipeline(eval_config: EvaluationConfig) -> PipelineConfig:
         pipeline_config = replace(eval_config.pipeline)
-        pipeline_config.timestamp = eval_config.timestamp
-        pipeline_config.set_timestamp()
+        pipeline_config.project_name = "evaluation"
+        pipeline_config.experiment_name = "evaluation"
+        pipeline_config.method_name = "default"  # TODO Rename to "evaluation"
+        pipeline_config.timestamp = "test"  # TODO Rename to "evaluation"
         pipeline_config.machine.seed = eval_config.seed
         return pipeline_config
 

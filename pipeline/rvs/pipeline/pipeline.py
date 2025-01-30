@@ -79,6 +79,8 @@ class PipelineConfig(ExperimentConfig):
     def propagate_experiment_settings(self):
         self.set_experiment_name()
         self.field.trainer.experiment_name = self.experiment_name
+        # self.field.trainer.method_name = self.method_name
+        self.field.trainer.project_name = self.project_name
         self.field.trainer.timestamp = self.timestamp
         self.field.trainer.machine.seed = self.machine.seed
         # TODO: There are some others like method_name, project_name and possibly more that should be propagated
@@ -114,6 +116,7 @@ class Pipeline:
     __field_output_dir: Path
     __embedding_output_dir: Path
     __clustering_output_dir: Path
+    __selection_output_dir: Path
 
     @property
     def output_dir(self) -> Path:
@@ -146,38 +149,60 @@ class Pipeline:
         self.__embedding_output_dir = Path("embedding")
         self.__io.mk_output_path(self.__embedding_output_dir)
 
-        self.clustering = self.config.clustering.setup()
-
         self.__clustering_output_dir = Path("clustering")
         self.__io.mk_output_path(self.__clustering_output_dir)
+
+        self.clustering = self.config.clustering.setup()
+
+        self.__selection_output_dir = Path("selection")
+        self.__io.mk_output_path(self.__selection_output_dir)
 
         self.selection = self.config.selection.setup()
 
     def run(self) -> "PipelineState":
         pipeline_state = PipelineState(self)
 
+        pipeline_state.scratch_output_dir = None
+
         if self.should_run_stage(PipelineStage.SAMPLE_VIEWS):
             CONSOLE.log("Generating view transforms...")
+
+            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__renderer_output_dir / "scratch")
+            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
+
             pipeline_state.training_views = self.views.generate(pipeline_state)
             transforms_path = self.__save_transforms(pipeline_state)
         elif self.should_load_stage(PipelineStage.SAMPLE_VIEWS):
             CONSOLE.log("Loading view transforms...")
             transforms_path = self.__load_transforms(pipeline_state)
 
+        pipeline_state.scratch_output_dir = None
+
         if self.should_run_stage(PipelineStage.RENDER_VIEWS):
             CONSOLE.log("Rendering view images...")
+
+            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__renderer_output_dir / "scratch")
+            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
+
             with ThreadedImageSaver(
                 self.__io.get_output_path(self.__renderer_output_dir), callback=self.__on_saved_view
             ) as saver:
                 self.renderer.render(self.config.model_file, pipeline_state.training_views, saver.save)
+
             for view in pipeline_state.training_views:
                 self.__set_view_path(view, output=True)
         elif self.should_load_stage(PipelineStage.RENDER_VIEWS):
             CONSOLE.log("Loading view images...")
             self.__load_view_paths(pipeline_state)
 
+        pipeline_state.scratch_output_dir = None
+
         if self.should_run_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Sampling positions...")
+
+            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__sampler_output_dir / "scratch")
+            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
+
             pipeline_state.sample_positions = self.sampler.sample(self.config.model_file, pipeline_state)
             self.__save_sample_positions(pipeline_state)
 
@@ -200,14 +225,21 @@ class Pipeline:
             CONSOLE.log("Loading positions...")
             self.__load_sample_positions(pipeline_state)
 
+        pipeline_state.scratch_output_dir = None
+
         if self.should_run_stage(PipelineStage.TRAIN_FIELD):
             CONSOLE.log("Training radiance field...")
+
+            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__field_output_dir / "scratch")
+            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
+
             self.field.init(
                 pipeline_state,
                 transforms_path,
                 self.__io.get_output_path(self.__field_output_dir),
                 **self.kwargs,
             )
+
             self.field.train()
         elif self.should_load_stage(PipelineStage.TRAIN_FIELD):
             CONSOLE.log("Loading radiance field...")
@@ -226,16 +258,28 @@ class Pipeline:
                 **self.kwargs,
             )
 
+        pipeline_state.scratch_output_dir = None
+
         if self.should_run_stage(PipelineStage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Sampling embeddings...")
+
+            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__embedding_output_dir / "scratch")
+            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
+
             pipeline_state.sample_embeddings = self.field.sample(pipeline_state.sample_positions)
             self.__save_sample_embeddings(pipeline_state)
         elif self.should_load_stage(PipelineStage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Loading embeddings...")
             self.__load_sample_embeddings(pipeline_state)
 
+        pipeline_state.scratch_output_dir = None
+
         if self.should_run_stage(PipelineStage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Clustering embeddings...")
+
+            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__clustering_output_dir / "scratch")
+            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
+
             pipeline_state.sample_clusters = self.clustering.cluster(pipeline_state.sample_embeddings, pipeline_state)
             self.__save_clusters(pipeline_state)
 
@@ -261,8 +305,14 @@ class Pipeline:
             CONSOLE.log("Loading clusters...")
             self.__load_clusters(pipeline_state)
 
+        pipeline_state.scratch_output_dir = None
+
         if self.should_run_stage(PipelineStage.SELECT_VIEWS):
             CONSOLE.log("Selecting views...")
+
+            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__selection_output_dir / "scratch")
+            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
+
             pipeline_state.selected_views = self.selection.select(pipeline_state.sample_clusters, pipeline_state)
 
             if self.config.render_selected_views:
@@ -286,6 +336,8 @@ class Pipeline:
             for i, view in enumerate(pipeline_state.selected_views):
                 CONSOLE.log(f"{view.index + 1} ({file_link(view.path) if view.path is not None else 'N/A'})")
         # TODO Implement loading data
+
+        pipeline_state.scratch_output_dir = None
 
         CONSOLE.log("Done...")
 

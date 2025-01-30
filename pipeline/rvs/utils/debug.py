@@ -4,12 +4,12 @@ from typing import Any, Callable, List, Optional
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.cm import get_cmap
 from matplotlib.patches import Patch
 from numpy.typing import NDArray
 from PIL import Image as im
 
 from rvs.pipeline.renderer import TrimeshRenderer, TrimeshRendererConfig, View
+from rvs.utils.plot import cluster_colors
 
 
 def render_sample_positions(
@@ -111,21 +111,3 @@ def color_legend(colors: List[Any], labels: List[str], title: str) -> Callable[[
         ax.legend(handles=patches, title=title)
 
     return figure_setup
-
-
-def cluster_colors(num_clusters: int) -> List[Any]:
-    assert num_clusters >= 0
-    if num_clusters == 0:
-        return []
-    elif num_clusters <= 3:
-        return [
-            np.array([1.0, 0.0, 0.0]),
-            np.array([0.0, 0.0, 1.0]),
-            np.array([0.0, 1.0, 0.0]),
-        ][:num_clusters]
-    elif num_clusters <= 10:
-        cmap = get_cmap("tab10")
-        return [cmap(i) for i in range(num_clusters)]
-    else:
-        cmap = get_cmap("gist_rainbow", num_clusters)
-        return [cmap(i) for i in range(num_clusters)]

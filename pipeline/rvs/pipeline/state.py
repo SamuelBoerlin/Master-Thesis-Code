@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
 
 from numpy.typing import NDArray
@@ -9,11 +10,14 @@ if TYPE_CHECKING:
 
 class PipelineState:
     pipeline: "Pipeline"
+
     training_views: Optional[List["View"]] = None
     sample_positions: Optional[NDArray] = None
     sample_embeddings: Optional[NDArray] = None
     sample_clusters: Optional[NDArray] = None
     selected_views: Optional[List["View"]] = None
+
+    scratch_output_dir: Optional[Path] = None
 
     def __init__(self, pipeline: "Pipeline") -> None:
         self.pipeline = pipeline

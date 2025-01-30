@@ -11,6 +11,7 @@ from rvs.evaluation.analysis.clusters import (
     calculte_clusters_histogram_per_category,
     plot_clusters_avg_per_category,
     plot_clusters_histogram,
+    plot_elbows_samples,
 )
 from rvs.evaluation.analysis.precision_recall import (
     calculate_precision_recall,
@@ -131,6 +132,17 @@ def evaluate_results(
             histogram_of_clusters_per_category,
             output_dir / "nr_of_clusters_histogram" / f"{category}.png",
             category_filter={category},
+        )
+
+    for category in tqdm(categories_embeddings.keys()):
+        plot_elbows_samples(
+            lvis,
+            available_uids,
+            category,
+            instance,
+            np.random.default_rng(seed=seed),
+            10,
+            output_dir / "elbows" / f"{category}.png",
         )
 
     plot_selected_views_avg_per_category(
