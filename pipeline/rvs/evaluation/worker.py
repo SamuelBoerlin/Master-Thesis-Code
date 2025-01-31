@@ -1,7 +1,7 @@
 import sys
 import traceback
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional, Set
 
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.process import ProcessResult
@@ -11,11 +11,11 @@ from rvs.pipeline.pipeline import PipelineStage
 def pipeline_worker_func(
     instance: PipelineEvaluationInstance,
     file: Path,
-    stages: Optional[List[PipelineStage]] = None,
+    stages_filter: Optional[Set[PipelineStage]] = None,
     result: Optional[ProcessResult] = None,
 ) -> None:
     try:
-        instance.run(file, stages)
+        instance.run(file, stages_filter=stages_filter)
         if result is not None:
             result.success = True
             result.close()

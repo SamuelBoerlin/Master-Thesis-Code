@@ -16,6 +16,7 @@ from rvs.evaluation.analysis.histogram import (
 )
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
+from rvs.pipeline.pipeline import PipelineStage
 from rvs.utils.elbow import Elbow, load_elbow
 from rvs.utils.plot import elbow_plot, save_figure
 
@@ -30,9 +31,10 @@ def count_clusters(
     for uid in tqdm(sorted(uids)):
         model_file = Path(lvis.uid_to_file[uid])
 
-        pipeline_config = instance.create_pipeline_config(model_file)
-
-        clusters_file = pipeline_config.get_base_dir() / "clustering" / "clusters.json"
+        clusters_file = instance.create_pipeline_io(model_file).get_path(
+            PipelineStage.CLUSTER_EMBEDDINGS,
+            Path("clustering") / "clusters.json",
+        )
 
         clusters: NDArray = None
 
@@ -118,8 +120,9 @@ def plot_elbows_samples(
         if uid in uids:
             model_file = Path(lvis.uid_to_file[uid])
 
-            elbow_file = (
-                instance.create_pipeline_config(model_file).get_base_dir() / "clustering" / "scratch" / "elbow.json"
+            elbow_file = instance.create_pipeline_io(model_file).get_path(
+                PipelineStage.CLUSTER_EMBEDDINGS,
+                Path("clustering") / "scratch" / "elbow.json",
             )
 
             if elbow_file.exists() and elbow_file.is_file():

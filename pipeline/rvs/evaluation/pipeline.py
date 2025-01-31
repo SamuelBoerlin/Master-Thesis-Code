@@ -2,11 +2,12 @@ import gc
 import shutil
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 
 import torch
 
 from rvs.evaluation.index import save_index
+from rvs.pipeline.io import PipelineIO
 from rvs.pipeline.pipeline import Pipeline, PipelineConfig, PipelineStage
 from rvs.scripts.rvs import _set_random_seed
 from rvs.utils.nerfstudio import create_transforms_json, get_frame_name
@@ -31,14 +32,18 @@ class PipelineEvaluationInstance:
 
     input_pipelines: Optional[List["PipelineEvaluationInstance"]]
 
+    stages: Optional[List[PipelineStage]]
+
     def __init__(
         self,
         config: PipelineConfig,
         output_dir: Path,
+        stages: Optional[List[PipelineStage]] = None,
         input_pipelines: Optional[List["PipelineEvaluationInstance"]] = None,
     ) -> None:
         self.config = config
         self.output_dir = output_dir
+        self.stages = stages
         self.input_pipelines = input_pipelines
 
     def init(self):
@@ -46,23 +51,22 @@ class PipelineEvaluationInstance:
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.pipeline_dir.mkdir(parents=True, exist_ok=True)
 
-    def run(self, file: Path, stages: Optional[List[PipelineStage]] = None) -> None:
-        input_dirs = None
+    def run(self, file: Path, stages_filter: Optional[Set[PipelineStage]] = None) -> None:
+        io = self.create_pipeline_io(file)
 
-        if self.input_pipelines is not None and len(self.input_pipelines) > 0:
-            input_dirs = []
-
-            for input_pipeline in self.input_pipelines:
-                input_pipeline_config = input_pipeline.create_pipeline_config(file)
-                input_dirs.append(input_pipeline_config.get_base_dir())
+        run_stages = self.get_pipeline_stages(stages_filter)
 
         pipeline = PipelineEvaluationInstance.create_pipeline(
             self.config,
             self.pipeline_dir,
-            input_dirs,
+            io.input_dirs,
             file,
-            stages,
+            run_stages,
         )
+
+        assert pipeline.config.stages == run_stages
+
+        assert pipeline.io and pipeline.io.input_dirs == io.input_dirs
 
         assert pipeline.config.output_dir == self.get_pipeline_dir(file)
 
@@ -125,6 +129,26 @@ class PipelineEvaluationInstance:
 
         return None
 
+    def get_pipeline_stages(self, stages_filter: Optional[Set[PipelineStage]]) -> Optional[List[PipelineStage]]:
+        if self.stages is None:
+            return None
+
+        if stages_filter is None:
+            return list(self.stages)
+
+        for stage in stages_filter:
+            if stage not in self.stages:
+                raise ValueError(
+                    f"Invalid filter stage {stage}, expected {', '.join([stage.name for stage in self.stages])}"
+                )
+
+        filtered_stages = [stage for stage in self.stages if stage in stages_filter]
+
+        if len(filtered_stages) == 0:
+            raise ValueError("No stages specified")
+
+        return filtered_stages
+
     def get_pipeline_dir(self, file: Path) -> Path:
         return self.pipeline_dir / file.name
 
@@ -134,12 +158,32 @@ class PipelineEvaluationInstance:
     def get_index_file(self, file: Path) -> Path:
         return self.get_results_dir(file) / INDEX_FILE_NAME
 
-    def create_pipeline_config(self, file: Path, stages: Optional[List[PipelineStage]] = None) -> PipelineConfig:
-        return PipelineEvaluationInstance.configure_pipeline(self.config, self.pipeline_dir, file, stages)
+    def create_pipeline_config(self, file: Path, stages_filter: Optional[Set[PipelineStage]] = None) -> PipelineConfig:
+        return PipelineEvaluationInstance.configure_pipeline(
+            self.config,
+            self.pipeline_dir,
+            file,
+            self.get_pipeline_stages(stages_filter),
+        )
+
+    def create_pipeline_io(self, file: Path, stages_filter: Optional[Set[PipelineStage]] = None) -> PipelineIO:
+        input_dirs = None
+
+        if self.input_pipelines is not None and len(self.input_pipelines) > 0:
+            input_dirs = []
+
+            for input_pipeline in self.input_pipelines:
+                input_pipeline_config = input_pipeline.create_pipeline_config(file)
+                input_dirs.append(input_pipeline_config.get_base_dir())
+
+        return self.create_pipeline_config(file, stages_filter).create_io(input_dirs)
 
     @staticmethod
     def configure_pipeline(
-        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[PipelineStage]]
+        config: PipelineConfig,
+        output_dir: Path,
+        file: Path,
+        stages: Optional[List[PipelineStage]],
     ) -> PipelineConfig:
         config = replace(config)
         config = PipelineEvaluationInstance.__configure_pipeline_run_settings(config, output_dir, file, stages)
@@ -175,5 +219,5 @@ class PipelineEvaluationInstance:
     ) -> PipelineConfig:
         config.output_dir = output_dir / file.name
         config.model_file = file
-        config.stages = stages
+        config.stages = None if stages is None else list(stages)
         return config

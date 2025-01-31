@@ -19,6 +19,7 @@ from rvs.evaluation.embedder import Embedder
 from rvs.evaluation.index import load_index
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
+from rvs.pipeline.pipeline import PipelineStage
 from rvs.utils.console import file_link
 from rvs.utils.plot import image_grid_plot, measure_artist, measure_figure, save_figure
 
@@ -148,9 +149,10 @@ def embed_random_views_avg(
 
         model_file = Path(lvis.uid_to_file[uid])
 
-        pipeline_config = instance.create_pipeline_config(model_file)
-
-        views_dir = pipeline_config.get_base_dir() / "renderer" / "images"
+        views_dir = instance.create_pipeline_io(model_file).get_path(
+            PipelineStage.RENDER_VIEWS,
+            Path("renderer") / "images",
+        )
 
         if views_dir.exists() and views_dir.is_dir():
             available_image_files = [

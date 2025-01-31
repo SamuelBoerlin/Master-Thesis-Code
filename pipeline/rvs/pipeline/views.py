@@ -133,3 +133,8 @@ class SphereViews(Views):
                     views.append(View(index=len(views), transform=transform))
 
         return views
+
+
+# TODO: Regular convex polyhedra (platonic solids ~> max. 30 equally spaced vertices/views possible)
+
+# TODO: Fibonacci spiral (https://arxiv.org/pdf/0912.4540)

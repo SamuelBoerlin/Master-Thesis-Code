@@ -108,6 +108,10 @@ class ElbowKMeansClusteringConfig(RangedKClusteringConfig):
     whitening: bool = True
     """Whether whitening should be done before K-Means clustering"""
 
+    # TODO Multiple runs per k and avg. distortion incl. outlier rejection
+
+    # TODO Try method with closest point to origin (requires distortion / Y axis scaling parameter)
+
 
 class ElbowKMeansClustering(Clustering):
     config: ElbowKMeansClusteringConfig

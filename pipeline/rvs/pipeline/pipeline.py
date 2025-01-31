@@ -99,6 +99,9 @@ class PipelineConfig(ExperimentConfig):
         CONSOLE.print(self)
         CONSOLE.rule("")
 
+    def create_io(self, input_dirs: Optional[List[Path]]) -> PipelineIO:
+        return PipelineIO(self.get_base_dir(), self.stages, input_dirs=input_dirs)
+
 
 class Pipeline:
     config: PipelineConfig
@@ -110,6 +113,10 @@ class Pipeline:
     selection: ViewSelection
 
     __io: PipelineIO
+
+    @property
+    def io(self) -> Optional[PipelineIO]:
+        return self.__io
 
     __renderer_output_dir: Path
     __sampler_output_dir: Path
@@ -127,7 +134,7 @@ class Pipeline:
         self.kwargs = kwargs
 
     def init(self, input_dirs: Optional[List[Path]] = None) -> None:
-        self.__io = PipelineIO(self.output_dir, input_dirs=input_dirs)
+        self.__io = self.config.create_io(input_dirs=input_dirs)
 
         self.__renderer_output_dir = Path("renderer")
         self.__io.mk_output_path(self.__renderer_output_dir)

@@ -100,7 +100,7 @@ class EvaluationRun:
 class PipelineRun:
     parent: EvaluationRun
     file: Path
-    stages: Optional[List[PipelineStage]]
+    stages_filter: Optional[Set[PipelineStage]]
 
 
 class Evaluation:
@@ -281,10 +281,15 @@ class Evaluation:
         with create_logger(
             __name__, files=[self.config.output_dir / "progress.log", run_dir / "progress.log"]
         ) as progress_logger_handle:
+            stages = PipelineStage.between(
+                self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
+            )
+
             run = EvaluationRun(
                 instance=PipelineEvaluationInstance(
                     Evaluation.__configure_pipeline(self.config),
                     self.intermediate_dir,
+                    stages=stages,
                     input_pipelines=self.input_pipelines,
                 ),
                 progress_logger=progress_logger_handle.logger,
@@ -461,19 +466,15 @@ class Evaluation:
         config.runtime.metadata[group] = nested_metadata
 
     def __run_stage_by_stage(self, run: EvaluationRun) -> bool:
-        stages = PipelineStage.between(
-            self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
-        )
-
         num_successful_runs = 0
 
         num_runs = 0
         total_runs = 0
-        for stage in stages:
+        for stage in run.instance.stages:
             for category in self.lvis.dataset.keys():
                 total_runs += len(self.lvis.dataset[category])
 
-        for stage in stages:
+        for stage in run.instance.stages:
             CONSOLE.log(f"Processing stage {str(stage)}...")
 
             for category in self.lvis.dataset.keys():
@@ -490,7 +491,13 @@ class Evaluation:
 
                     CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
 
-                    if self.__run_pipeline(PipelineRun(parent=run, file=file, stages=[stage])):
+                    if self.__run_pipeline(
+                        PipelineRun(
+                            parent=run,
+                            file=file,
+                            stages_filter={stage},
+                        )
+                    ):
                         num_successful_runs += 1
                     num_runs += 1
 
@@ -501,10 +508,6 @@ class Evaluation:
         return True
 
     def __run_object_by_object(self, run: EvaluationRun) -> bool:
-        stages = PipelineStage.between(
-            self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
-        )
-
         num_successful_runs = 0
 
         num_runs = 0
@@ -523,7 +526,13 @@ class Evaluation:
 
                 CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
 
-                if self.__run_pipeline(PipelineRun(parent=run, file=file, stages=stages)):
+                if self.__run_pipeline(
+                    PipelineRun(
+                        parent=run,
+                        file=file,
+                        stages_filter=None,
+                    )
+                ):
                     num_successful_runs += 1
                 num_runs += 1
 
@@ -538,7 +547,8 @@ class Evaluation:
         run: PipelineRun,
         handle_errors: bool = True,
     ) -> bool:
-        stages_str = "..." if run.stages is None else ", ".join([stage.name for stage in run.stages])
+        run_stages = run.parent.instance.get_pipeline_stages(run.stages_filter)
+        stages_str = "..." if run_stages is None else ", ".join([stage.name for stage in run_stages])
         pipeline_str = f'"{self.__safe_resolve(run.file)}" -> [{stages_str}] -> "{self.__safe_resolve(run.parent.instance.get_pipeline_dir(run.file))}" -> "{self.__safe_resolve(run.parent.instance.get_results_dir(run.file))}"'
 
         skip = False
@@ -568,7 +578,7 @@ class Evaluation:
                     args=(
                         run.parent.instance,
                         run.file,
-                        run.stages,
+                        run.stages_filter,
                         result,
                     ),
                 )
