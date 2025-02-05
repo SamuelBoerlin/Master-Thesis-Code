@@ -15,7 +15,7 @@ from rvs.pipeline.pipeline import FieldConfig, PipelineConfig
 from rvs.pipeline.renderer import TrimeshRendererConfig
 from rvs.pipeline.sampler import TrimeshPositionSamplerConfig
 from rvs.pipeline.selection import BestTrainingViewSelectionConfig
-from rvs.pipeline.views import SphereViewsConfig
+from rvs.pipeline.views import FermatSpiralViewsConfig, SphereViewsConfig
 from rvs.utils.dataclasses import extend_dataclass_obj
 
 
@@ -63,6 +63,7 @@ pipeline_descriptions = {
     "default-lite": "Default big model.",
     "default-big": "Default lite model.",
     "elbow_kmeans": "Default model with elbow kmeans.",
+    "fermat_views": "Default model with fermat spiral views.",
 }
 
 pipeline_configs["default"] = PipelineConfig(
@@ -102,6 +103,16 @@ pipeline_configs["elbow_kmeans"] = PipelineConfig(
     field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
     sampler=TrimeshPositionSamplerConfig(),
     clustering=ElbowKMeansClusteringConfig(),
+    selection=BestTrainingViewSelectionConfig(),
+)
+
+pipeline_configs["fermat_views"] = PipelineConfig(
+    method_name="fermat_views",
+    views=FermatSpiralViewsConfig(),
+    renderer=TrimeshRendererConfig(),
+    field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
+    sampler=TrimeshPositionSamplerConfig(),
+    clustering=KMeansClusteringConfig(),
     selection=BestTrainingViewSelectionConfig(),
 )
 

@@ -27,7 +27,8 @@ class PipelineIO:
             self.input_dirs = [self.output_dir]
         else:
             self.input_dirs = list(input_dirs)
-            self.input_dirs.append(self.output_dir)
+            if self.input_dirs[-1] != self.output_dir:
+                self.input_dirs.append(self.output_dir)
 
     def get_path(
         self,
