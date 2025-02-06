@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Optional, Set
 
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
-from rvs.evaluation.process import ProcessResult
 from rvs.pipeline.pipeline import PipelineStage
+from rvs.utils.process import ProcessResult
 
 
 def pipeline_worker_func(

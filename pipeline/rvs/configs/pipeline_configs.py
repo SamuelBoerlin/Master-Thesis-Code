@@ -12,7 +12,7 @@ from rvs.lerf.lerf_datamanager import CustomLERFDataManagerConfig
 from rvs.lerf.lerf_model import CustomLERFModelConfig
 from rvs.pipeline.clustering import ElbowKMeansClusteringConfig, KMeansClusteringConfig
 from rvs.pipeline.pipeline import FieldConfig, PipelineConfig
-from rvs.pipeline.renderer import TrimeshRendererConfig
+from rvs.pipeline.renderer import BlenderRendererConfig, TrimeshRendererConfig
 from rvs.pipeline.sampler import TrimeshPositionSamplerConfig
 from rvs.pipeline.selection import BestTrainingViewSelectionConfig
 from rvs.pipeline.views import FermatSpiralViewsConfig, SphereViewsConfig
@@ -64,6 +64,7 @@ pipeline_descriptions = {
     "default-big": "Default lite model.",
     "elbow_kmeans": "Default model with elbow kmeans.",
     "fermat_views": "Default model with fermat spiral views.",
+    "blender_renderer_fermat_views": "Default model with blender renderer and fermat spiral views.",
 }
 
 pipeline_configs["default"] = PipelineConfig(
@@ -110,6 +111,16 @@ pipeline_configs["fermat_views"] = PipelineConfig(
     method_name="fermat_views",
     views=FermatSpiralViewsConfig(),
     renderer=TrimeshRendererConfig(),
+    field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
+    sampler=TrimeshPositionSamplerConfig(),
+    clustering=KMeansClusteringConfig(),
+    selection=BestTrainingViewSelectionConfig(),
+)
+
+pipeline_configs["blender_renderer_fermat_views"] = PipelineConfig(
+    method_name="blender_renderer_fermat_views",
+    views=FermatSpiralViewsConfig(),
+    renderer=BlenderRendererConfig(),
     field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
     sampler=TrimeshPositionSamplerConfig(),
     clustering=KMeansClusteringConfig(),

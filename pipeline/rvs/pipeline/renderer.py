@@ -1,7 +1,11 @@
 import io
+import math
+import shlex
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Optional, Type
+from typing import Callable, Dict, List, Optional, Tuple, Type
 
 import numpy as np
 import pyglet
@@ -12,10 +16,13 @@ from numpy.typing import NDArray
 from PIL import Image as im
 from pyglet import gl
 from pyrender.constants import RenderFlags
+from scipy.spatial.transform import Rotation
 from trimesh import Scene
 from trimesh.viewer import SceneViewer
 
+from rvs.pipeline.state import PipelineState
 from rvs.pipeline.views import View
+from rvs.utils.blender_renderer import Render, save_render_json, script_file as blender_renderer_script_file
 from rvs.utils.trimesh import normalize_scene
 
 
@@ -57,13 +64,25 @@ class RendererConfig(InstantiateConfig):
         return self.height * 0.5 / np.tan(np.deg2rad(self.fov_y) * 0.5)
 
 
+@dataclass
+class RenderOutput:
+    path: Optional[Callable[[View], Optional[Path]]]
+    callback: Callable[[View, Optional[im.Image]], None]
+
+
 class Renderer:
     config: RendererConfig
 
     def __init__(self, config: RendererConfig) -> None:
         self.config = config
 
-    def render(self, file: Path, views: List[View], callback: Callable[[View, im.Image], None]) -> None:
+    def render(
+        self,
+        file: Path,
+        views: List[View],
+        output: RenderOutput,
+        pipeline_state: PipelineState,
+    ) -> None:
         pass
 
 
@@ -86,7 +105,8 @@ class TrimeshRenderer(Renderer):
         self,
         file: Path,
         views: List[View],
-        callback: Callable[[View, im.Image], None],
+        output: RenderOutput,
+        pipeline_state: PipelineState,
         sample_positions: Optional[NDArray] = None,
         sample_colors: Optional[NDArray] = None,
     ) -> None:
@@ -143,7 +163,7 @@ class TrimeshRenderer(Renderer):
                     with im.open(buffer) as image:
                         image.load()
                         self.process_image(image)
-                        callback(view, image)
+                        output.callback(view, image)
         finally:
             viewer.close()
 
@@ -195,7 +215,13 @@ class PyrenderRenderer(Renderer):
         super().__init__(self, config)
         self.config = config
 
-    def render(self, file: Path, views: List[View], callback: Callable[[View, im.Image], None]) -> None:
+    def render(
+        self,
+        file: Path,
+        views: List[View],
+        output: RenderOutput,
+        pipeline_state: PipelineState,
+    ) -> None:
         obj = trimesh.load(file)
         tmesh = list(obj.geometry.values())[0]
 
@@ -231,4 +257,139 @@ class PyrenderRenderer(Renderer):
             color, _ = renderer.render(scene, flags=RenderFlags.SKIP_CULL_FACES)
 
             with im.fromarray(color) as image:
-                callback(view, image)
+                output.callback(view, image)
+
+
+@dataclass
+class BlenderRendererConfig(RendererConfig):
+    _target: Type = field(default_factory=lambda: BlenderRenderer)
+
+    blender_binary: Path = Path(__file__).parent / ".." / ".." / "blender" / "blender"
+    """Path to the blender binary"""
+
+
+class BlenderRenderer(Renderer):
+    config: BlenderRendererConfig
+
+    def __init__(self, config: BlenderRendererConfig) -> None:
+        super().__init__(config)
+        self.config = config
+
+    def render(
+        self,
+        file: Path,
+        views: List[View],
+        output: RenderOutput,
+        pipeline_state: PipelineState,
+    ) -> None:
+        if pipeline_state.scratch_output_dir is None:
+            raise Exception("Scratch dir required")
+
+        renders_dir = pipeline_state.scratch_output_dir / "renders"
+
+        if renders_dir.exists():
+            shutil.rmtree(renders_dir)
+
+        renders_dir.mkdir(parents=True)
+
+        renders = self.create_render_files(views, output, renders_dir)
+
+        self.run_renders(file, list(renders.keys()))
+
+        for render in renders.values():
+            if not Path(render.output_file).exists():
+                raise Exception(f"Render output file {render.output_file} does not exist")
+
+            for view in views:
+                if view.index == render.index:
+                    if render.output_file.startswith(str(renders_dir.resolve())):
+                        with im.open(render.output_file) as image:
+                            image.load()
+                            output.callback(view, image)
+                    else:
+                        output.callback(view, None)
+
+    def create_render_files(self, views: List[View], output: RenderOutput, dir: Path) -> Dict[Path, Render]:
+        tol = 0.000001
+
+        focal_length = self.config.focal_length_x
+
+        if np.abs(focal_length - self.config.focal_length_y) > tol:
+            raise Exception(
+                f"Focal length X {self.config.focal_length_x} and Y {self.config.focal_length_y} are not equal"
+            )
+
+        renders: Dict[Path, Render] = dict()
+
+        for view in views:
+            position, rotation = self.decompose_transform_for_blender(view.transform)
+
+            output_file: str = None
+
+            if output.path is not None:
+                output_file = output.path(view)
+
+            if output_file is None:
+                output_file = dir / f"render_{view.index}.png"
+
+            render = Render(
+                index=view.index,
+                focal_length=focal_length,
+                width=self.config.width,
+                height=self.config.height,
+                position=tuple(position),
+                rotation=tuple(rotation),
+                output_file=str(output_file.resolve()),
+            )
+
+            file = save_render_json(render, dir / f"render_{view.index}.json")
+
+            renders[file] = render
+
+        return renders
+
+    def decompose_transform_for_blender(self, transform: NDArray) -> Tuple[NDArray, NDArray]:
+        tol = 0.000001
+
+        # Convert to Blender's Z-up coordinate system
+        rot_x = 0.5 * np.pi
+        transform = (
+            np.array(
+                [
+                    [1, 0, 0, 0],
+                    [0, np.cos(rot_x), -np.sin(rot_x), 0],
+                    [0, np.sin(rot_x), np.cos(rot_x), 0],
+                    [0, 0, 0, 1],
+                ]
+            )
+            @ transform
+        )
+
+        if np.linalg.norm(transform[3, :] - np.array([0.0, 0.0, 0.0, 1.0])) > tol:
+            raise Exception(
+                f"Invalid homogeneous coordinates {transform[3, :].tolist()}, expected [0.0, 0.0, 0.0, 1.0]"
+            )
+
+        rotation = transform[:3, :3]
+
+        if np.abs(np.linalg.det(rotation) - 1.0) > tol:
+            raise Exception(f"Invalid determinant {np.linalg.det(rotation)}, expected 1.0")
+
+        if np.sum(rotation.T @ rotation - np.eye(3)) > tol:
+            raise Exception("Top left 3x3 matrix is non-orthogonal")
+
+        euler_angles = Rotation.from_matrix(rotation).as_euler("xyz", degrees=False)
+
+        translation = transform[:3, 3]
+
+        return (translation, euler_angles)
+
+    def run_renders(self, model_file: Path, render_files: List[Path]) -> None:
+        command = (
+            f"export DISPLAY=:0.0 && {shlex.quote(str(self.config.blender_binary.absolute()))} -b"
+            f" -P {shlex.quote(str(blender_renderer_script_file.absolute()))}"
+            f" -- --model_file {shlex.quote(str(model_file.absolute()))}"
+        )
+        for render_file in render_files:
+            command += f" --render_file {shlex.quote(str(render_file.absolute()))}"
+        subprocess.run(command, shell=True, check=True)

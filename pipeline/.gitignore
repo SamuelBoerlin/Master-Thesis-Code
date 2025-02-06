@@ -1,4 +1,6 @@
 /outputs
+/outputs_*
+/blender
 
 ###########################
 # GitHub Python.gitignore #

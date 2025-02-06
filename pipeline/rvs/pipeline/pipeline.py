@@ -13,7 +13,7 @@ from PIL import Image as im
 from rvs.pipeline.clustering import Clustering, ClusteringConfig
 from rvs.pipeline.field import Field, FieldConfig
 from rvs.pipeline.io import PipelineIO
-from rvs.pipeline.renderer import Renderer, RendererConfig
+from rvs.pipeline.renderer import Renderer, RendererConfig, RenderOutput
 from rvs.pipeline.sampler import PositionSampler, PositionSamplerConfig
 from rvs.pipeline.selection import ViewSelection, ViewSelectionConfig
 from rvs.pipeline.state import PipelineState
@@ -23,6 +23,7 @@ from rvs.utils.debug import render_sample_clusters, render_sample_positions
 from rvs.utils.nerfstudio import (
     ThreadedImageSaver,
     get_frame_name,
+    get_transforms_frame_path,
     load_transforms_json,
     save_transforms_frame,
     save_transforms_json,
@@ -194,7 +195,23 @@ class Pipeline:
             with ThreadedImageSaver(
                 self.__io.get_output_path(self.__renderer_output_dir), callback=self.__on_saved_view
             ) as saver:
-                self.renderer.render(self.config.model_file, pipeline_state.training_views, saver.save)
+
+                def get_save_path(view: View) -> Path:
+                    return get_transforms_frame_path(saver.output_dir, view)
+
+                def callback(view: View, image: Optional[im.Image]):
+                    if image is not None:
+                        saver.save(view, image)
+                    else:
+                        path = get_save_path(view)
+                        if not path.exists():
+                            raise Exception(f"Render was not directly saved to {str(path)}")
+
+                render_output = RenderOutput(path=get_save_path, callback=callback)
+
+                self.renderer.render(
+                    self.config.model_file, pipeline_state.training_views, render_output, pipeline_state
+                )
 
             for view in pipeline_state.training_views:
                 self.__set_view_path(view, output=True)

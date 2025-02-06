@@ -17,12 +17,12 @@ from rvs.evaluation.evaluation_method import evaluate_results
 from rvs.evaluation.index import load_index
 from rvs.evaluation.lvis import LVISDataset
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
-from rvs.evaluation.process import ProcessResult, start_process, stop_process
 from rvs.evaluation.worker import pipeline_worker_func
 from rvs.pipeline.pipeline import PipelineConfig, PipelineStage
 from rvs.utils.config import find_changed_config_fields, find_config_working_dir, load_config
 from rvs.utils.console import file_link
 from rvs.utils.logging import create_logger
+from rvs.utils.process import ProcessResult, start_process, stop_process
 
 
 @dataclass

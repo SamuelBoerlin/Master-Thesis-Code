@@ -15,6 +15,16 @@ def get_frame_name(view: Optional[View], frame_name: Optional[str] = None, frame
     return frame_name.format(str((view.index + 1) if view is not None else (frame_index + 1)).zfill(5))
 
 
+def get_transforms_frame_path(
+    dir: Path,
+    view: View,
+    frame_dir: Path = Path("images/"),
+    frame_name: Optional[str] = None,
+) -> Path:
+    frame_path = dir / frame_dir / get_frame_name(view, frame_name)
+    return frame_path
+
+
 def save_transforms_frame(
     dir: Path,
     view: View,
@@ -23,9 +33,13 @@ def save_transforms_frame(
     frame_name: Optional[str] = None,
     set_path: bool = False,
 ) -> Path:
-    frame_dir = dir / frame_dir
-    frame_dir.mkdir(exist_ok=True)
-    frame_path = frame_dir / get_frame_name(view, frame_name)
+    frame_path = get_transforms_frame_path(
+        dir,
+        view,
+        frame_dir=frame_dir,
+        frame_name=frame_name,
+    )
+    frame_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(frame_path)
     if set_path:
         view.path = frame_path
