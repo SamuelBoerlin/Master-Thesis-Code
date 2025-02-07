@@ -139,6 +139,8 @@ class TrimeshRenderer(Renderer):
         # Other defaults are taken from trimesh SceneViewer.__init__()
         pyglet_conf = gl.Config(sample_buffers=1, samples=4, depth_size=24, double_buffer=True, alpha_size=8)
 
+        scene.camera.fov = np.array([self.config.fov_x, self.config.fov_y])
+
         viewer = SceneViewer(
             scene,
             start_loop=False,
