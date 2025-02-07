@@ -10,7 +10,7 @@ from trimesh.scene import Scene
 from trimesh.typed import Integer, NDArray, Number, Optional
 
 from rvs.pipeline.state import PipelineState
-from rvs.utils.trimesh import normalize_scene
+from rvs.utils.trimesh import normalize_scene_manual
 
 
 @dataclass
@@ -41,6 +41,9 @@ class TrimeshPositionSamplerConfig(PositionSamplerConfig):
 
 class TrimeshPositionSampler(PositionSampler):
     def sample(self, file: Path, pipeline_state: PipelineState) -> NDArray:
+        if pipeline_state.model_normalization is None:
+            raise Exception("Model normalization required")
+
         obj = trimesh.load(file)
 
         if not isinstance(obj, Scene):
@@ -48,7 +51,7 @@ class TrimeshPositionSampler(PositionSampler):
 
         scene: Scene = obj
 
-        scene = normalize_scene(scene)
+        scene = normalize_scene_manual(scene, pipeline_state.model_normalization)
 
         # NB: This must happen after normalize_scene, otherwise the scales
         # may end up different than what was used to render the views

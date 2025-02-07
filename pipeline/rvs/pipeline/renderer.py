@@ -19,11 +19,18 @@ from scipy.spatial.transform import Rotation
 from trimesh import Scene
 from trimesh.viewer import SceneViewer
 
-from rvs.pipeline.state import PipelineState
+from rvs.pipeline.state import Normalization, PipelineState
 from rvs.pipeline.views import View
-from rvs.utils.blender_renderer import Render, renderer_worker_func, save_render_json
+from rvs.utils.blender_renderer import (
+    Normalization as BlenderNormalization,
+    Render,
+    load_normalization_json,
+    renderer_worker_func,
+    save_normalization_json,
+    save_render_json,
+)
 from rvs.utils.process import ProcessResult, stop_process
-from rvs.utils.trimesh import normalize_scene
+from rvs.utils.trimesh import normalize_scene_auto, normalize_scene_manual
 
 
 @dataclass
@@ -82,7 +89,7 @@ class Renderer:
         views: List[View],
         output: RenderOutput,
         pipeline_state: PipelineState,
-    ) -> None:
+    ) -> Normalization:
         pass
 
 
@@ -109,7 +116,7 @@ class TrimeshRenderer(Renderer):
         pipeline_state: PipelineState,
         sample_positions: Optional[NDArray] = None,
         sample_colors: Optional[NDArray] = None,
-    ) -> None:
+    ) -> Normalization:
         obj = trimesh.load(file)
 
         if not isinstance(obj, Scene):
@@ -117,7 +124,12 @@ class TrimeshRenderer(Renderer):
 
         scene: Scene = obj
 
-        scene = normalize_scene(scene)
+        normalization = pipeline_state.model_normalization
+
+        if normalization is not None:
+            scene = normalize_scene_manual(scene, normalization)
+        else:
+            scene, normalization = normalize_scene_auto(scene)
 
         if sample_positions is not None:
             self.add_sample_positions(scene, sample_positions, sample_colors=sample_colors)
@@ -166,6 +178,8 @@ class TrimeshRenderer(Renderer):
                         output.callback(view, image)
         finally:
             viewer.close()
+
+        return normalization
 
     def add_sample_positions(
         self, scene: Scene, sample_positions: NDArray, sample_colors: Optional[NDArray] = None
@@ -221,9 +235,14 @@ class PyrenderRenderer(Renderer):
         views: List[View],
         output: RenderOutput,
         pipeline_state: PipelineState,
-    ) -> None:
+    ) -> Normalization:
         obj = trimesh.load(file)
         tmesh = list(obj.geometry.values())[0]
+
+        normalization: Normalization = pipeline_state.model_normalization
+
+        # FIXME Implement normalization
+        raise Exception("Not implemented")
 
         tmesh.vertices -= mesh.centroid
         tmesh.vertices *= 1.0 / np.max(mesh.extents)
@@ -259,6 +278,8 @@ class PyrenderRenderer(Renderer):
             with im.fromarray(color) as image:
                 output.callback(view, image)
 
+        return normalization
+
 
 @dataclass
 class BlenderRendererConfig(RendererConfig):
@@ -281,7 +302,7 @@ class BlenderRenderer(Renderer):
         views: List[View],
         output: RenderOutput,
         pipeline_state: PipelineState,
-    ) -> None:
+    ) -> Normalization:
         if pipeline_state.scratch_output_dir is None:
             raise Exception("Scratch dir required")
 
@@ -296,7 +317,26 @@ class BlenderRenderer(Renderer):
 
         renders = self.create_render_files(views, output, renders_dir)
 
-        self.run_renders(file, list(renders.keys()))
+        normalization = pipeline_state.model_normalization
+        normalization_file: Path
+
+        if normalization is not None:
+            normalization_file = self.create_normalization_file_manual(normalization, pipeline_state.scratch_output_dir)
+        else:
+            normalization_file = self.create_normalization_file_auto(file, pipeline_state.scratch_output_dir)
+
+            blender_normalization = load_normalization_json(normalization_file)
+
+            normalization = Normalization(
+                np.array(
+                    [blender_normalization.scale[0], blender_normalization.scale[2], blender_normalization.scale[1]]
+                ),
+                np.array(
+                    [blender_normalization.offset[0], blender_normalization.offset[2], blender_normalization.offset[1]]
+                ),
+            )
+
+        self.run_renders(file, list(renders.keys()), normalization_file)
 
         for render in renders.values():
             output_file = Path(render.output_file)
@@ -316,6 +356,8 @@ class BlenderRenderer(Renderer):
                             output.callback(view, image)
                     else:
                         output.callback(view, None)
+
+        return normalization
 
     def create_render_files(self, views: List[View], output: RenderOutput, dir: Path) -> Dict[Path, Render]:
         tol = 0.000001
@@ -392,7 +434,57 @@ class BlenderRenderer(Renderer):
 
         return (translation, euler_angles)
 
-    def run_renders(self, model_file: Path, render_files: List[Path], processes: int = 4, gpu: int = 0) -> None:
+    def create_normalization_file_auto(self, model_file: Path, dir: Path, gpu: int = 0) -> Path:
+        normalization_file = dir / "normalization.json"
+
+        try:
+            with ProcessResult() as result:
+                process = Process(
+                    target=renderer_worker_func,
+                    args=(self.config.blender_binary, model_file, [], normalization_file, True, gpu, result),
+                    daemon=True,
+                )
+
+                process.start()
+                process.join()
+
+                if not result.success:
+                    if result.msg is not None:
+                        raise Exception(f"Normalization failed due to exception:\n{result.msg}")
+                    else:
+                        raise Exception("Normalization failed due to unknown reason")
+        finally:
+            try:
+                stop_process(process)
+                process.join()
+            except Exception:
+                pass
+
+            try:
+                process.close()
+            except Exception:
+                pass
+
+        if not normalization_file.exists():
+            raise Exception(f"Normalization file {str(normalization_file)} does not exist")
+
+        return normalization_file
+
+    def create_normalization_file_manual(self, normalization: Normalization, dir: Path) -> Path:
+        normalization_file = dir / "normalization.json"
+
+        blender_normalization: BlenderNormalization = BlenderNormalization(
+            scale=(normalization.scale[0], normalization.scale[2], normalization.scale[1]),
+            offset=(normalization.offset[0], normalization.offset[2], normalization.offset[1]),
+        )
+
+        save_normalization_json(blender_normalization, normalization_file)
+
+        return normalization_file
+
+    def run_renders(
+        self, model_file: Path, render_files: List[Path], normalization_file: Path, processes: int = 4, gpu: int = 0
+    ) -> None:
         if processes < 1:
             raise ValueError(f"processes ({processes}) < 1")
 
@@ -410,7 +502,7 @@ class BlenderRenderer(Renderer):
 
                     process = Process(
                         target=renderer_worker_func,
-                        args=(self.config.blender_binary, model_file, chunk, gpu, result),
+                        args=(self.config.blender_binary, model_file, chunk, normalization_file, False, gpu, result),
                         daemon=True,
                     )
 

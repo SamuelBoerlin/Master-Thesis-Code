@@ -13,7 +13,7 @@ from PIL import Image as im
 from rvs.pipeline.clustering import Clustering, ClusteringConfig
 from rvs.pipeline.field import Field, FieldConfig
 from rvs.pipeline.io import PipelineIO
-from rvs.pipeline.renderer import Renderer, RendererConfig, RenderOutput
+from rvs.pipeline.renderer import Normalization, Renderer, RendererConfig, RenderOutput
 from rvs.pipeline.sampler import PositionSampler, PositionSamplerConfig
 from rvs.pipeline.selection import ViewSelection, ViewSelectionConfig
 from rvs.pipeline.state import PipelineState
@@ -209,13 +209,18 @@ class Pipeline:
 
                 render_output = RenderOutput(path=get_save_path, callback=callback)
 
-                self.renderer.render(
+                pipeline_state.model_normalization = self.renderer.render(
                     self.config.model_file, pipeline_state.training_views, render_output, pipeline_state
                 )
+
+            self.__save_model_normalization(pipeline_state)
 
             for view in pipeline_state.training_views:
                 self.__set_view_path(view, output=True)
         elif self.should_load_stage(PipelineStage.RENDER_VIEWS):
+            CONSOLE.log("Loading normalization...")
+            self.__load_model_normalization(pipeline_state)
+
             CONSOLE.log("Loading view images...")
             self.__load_view_paths(pipeline_state)
 
@@ -422,6 +427,31 @@ class Pipeline:
                 view.path = path
             else:
                 raise FileNotFoundError(f"View image {path} not found")
+
+    def __save_model_normalization(self, state: "PipelineState") -> Path:
+        path = self.__io.get_output_path(self.__renderer_output_dir / "normalization.json")
+        with path.open("w") as f:
+            json.dump(
+                {
+                    "scale": state.model_normalization.scale.tolist(),
+                    "offset": state.model_normalization.offset.tolist(),
+                },
+                f,
+            )
+        CONSOLE.log(f"Saved normalization to {file_link(path)}")
+
+    def __load_model_normalization(self, state: "PipelineState") -> Path:
+        path = self.__io.get_input_path(self.__renderer_output_dir / "normalization.json")
+        try:
+            with path.open("r") as f:
+                obj = json.load(f)
+                state.model_normalization = Normalization(
+                    scale=np.array(obj["scale"]),
+                    offset=np.array(obj["offset"]),
+                )
+        except Exception as ex:
+            CONSOLE.log("Failed loading normalization:")
+            raise ex
 
     def __save_sample_positions(self, state: "PipelineState") -> Path:
         path = self.__io.get_output_path(self.__sampler_output_dir / "positions.json")

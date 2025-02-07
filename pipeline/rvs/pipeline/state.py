@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, NamedTuple, Optional
 
 from numpy.typing import NDArray
 
@@ -8,10 +8,16 @@ if TYPE_CHECKING:
     from rvs.pipeline.views import View
 
 
+class Normalization(NamedTuple):
+    scale: NDArray
+    offset: NDArray
+
+
 class PipelineState:
     pipeline: "Pipeline"
 
     training_views: Optional[List["View"]] = None
+    model_normalization: Optional[Normalization] = None
     sample_positions: Optional[NDArray] = None
     sample_embeddings: Optional[NDArray] = None
     sample_clusters: Optional[NDArray] = None
