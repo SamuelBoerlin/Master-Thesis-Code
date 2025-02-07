@@ -324,17 +324,7 @@ class BlenderRenderer(Renderer):
             normalization_file = self.create_normalization_file_manual(normalization, pipeline_state.scratch_output_dir)
         else:
             normalization_file = self.create_normalization_file_auto(file, pipeline_state.scratch_output_dir)
-
-            blender_normalization = load_normalization_json(normalization_file)
-
-            normalization = Normalization(
-                np.array(
-                    [blender_normalization.scale[0], blender_normalization.scale[2], blender_normalization.scale[1]]
-                ),
-                np.array(
-                    [blender_normalization.offset[0], blender_normalization.offset[2], blender_normalization.offset[1]]
-                ),
-            )
+            normalization = self.from_blender_normalization(load_normalization_json(normalization_file))
 
         self.run_renders(file, list(renders.keys()), normalization_file)
 
@@ -401,19 +391,7 @@ class BlenderRenderer(Renderer):
     def decompose_transform_for_blender(self, transform: NDArray) -> Tuple[NDArray, NDArray]:
         tol = 0.000001
 
-        # Convert to Blender's Z-up coordinate system
-        rot_x = 0.5 * np.pi
-        transform = (
-            np.array(
-                [
-                    [1, 0, 0, 0],
-                    [0, np.cos(rot_x), -np.sin(rot_x), 0],
-                    [0, np.sin(rot_x), np.cos(rot_x), 0],
-                    [0, 0, 0, 1],
-                ]
-            )
-            @ transform
-        )
+        transform = self.to_blender_transform(transform)
 
         if np.linalg.norm(transform[3, :] - np.array([0.0, 0.0, 0.0, 1.0])) > tol:
             raise Exception(
@@ -473,14 +451,35 @@ class BlenderRenderer(Renderer):
     def create_normalization_file_manual(self, normalization: Normalization, dir: Path) -> Path:
         normalization_file = dir / "normalization.json"
 
-        blender_normalization: BlenderNormalization = BlenderNormalization(
-            scale=(normalization.scale[0], normalization.scale[2], normalization.scale[1]),
-            offset=(normalization.offset[0], normalization.offset[2], normalization.offset[1]),
-        )
-
-        save_normalization_json(blender_normalization, normalization_file)
+        save_normalization_json(self.to_blender_normalization(normalization), normalization_file)
 
         return normalization_file
+
+    def to_blender_transform(self, transform: NDArray) -> NDArray:
+        rot_x = 0.5 * np.pi
+        return (
+            np.array(
+                [
+                    [1, 0, 0, 0],
+                    [0, np.cos(rot_x), -np.sin(rot_x), 0],
+                    [0, np.sin(rot_x), np.cos(rot_x), 0],
+                    [0, 0, 0, 1],
+                ]
+            )
+            @ transform
+        )
+
+    def to_blender_normalization(self, normalization: Normalization) -> BlenderNormalization:
+        return BlenderNormalization(
+            scale=(normalization.scale[0], normalization.scale[2], normalization.scale[1]),
+            offset=(normalization.offset[0], -normalization.offset[2], normalization.offset[1]),
+        )
+
+    def from_blender_normalization(self, normalization: BlenderNormalization) -> Normalization:
+        return Normalization(
+            np.array([normalization.scale[0], normalization.scale[2], normalization.scale[1]]),
+            np.array([normalization.offset[0], -normalization.offset[2], normalization.offset[1]]),
+        )
 
     def run_renders(
         self, model_file: Path, render_files: List[Path], normalization_file: Path, processes: int = 4, gpu: int = 0

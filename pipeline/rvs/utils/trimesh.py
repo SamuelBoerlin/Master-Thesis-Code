@@ -21,7 +21,7 @@ def normalize_scene_auto(scene: Scene) -> Tuple[Scene, Normalization]:
 
 
 def normalize_scene_manual(scene: Scene, normalization: Normalization) -> Scene:
-    scene.scaled(normalization.scale)
+    scene = scene.scaled(normalization.scale)
 
     transform = np.eye(4)
     transform[:3, 3] = normalization.offset
