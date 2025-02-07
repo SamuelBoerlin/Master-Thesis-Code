@@ -51,7 +51,7 @@ class RuntimeSettings(PrintableConfig):
     results_only: bool = False
     """Run results part only"""
 
-    set_read_only: bool = None
+    set_read_only: Optional[bool] = None
     """Sets the data to be read-only and exists immediately after if flag set"""
 
 
@@ -619,8 +619,8 @@ class Evaluation:
         pipeline_config = replace(eval_config.pipeline)
         pipeline_config.project_name = "evaluation"
         pipeline_config.experiment_name = "evaluation"
-        pipeline_config.method_name = "default"  # TODO Rename to "evaluation"
-        pipeline_config.timestamp = "test"  # TODO Rename to "evaluation"
+        pipeline_config.method_name = "evaluation"
+        pipeline_config.timestamp = "evaluation"
         pipeline_config.machine.seed = eval_config.seed
         return pipeline_config
 

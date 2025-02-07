@@ -208,8 +208,8 @@ class PipelineEvaluationInstance:
 
         pipeline.init(input_dirs=input_dirs)
 
-        config.print_to_terminal()
-        config.save_config()
+        pipeline.config.print_to_terminal()
+        pipeline.config.save_config()
 
         return pipeline
 

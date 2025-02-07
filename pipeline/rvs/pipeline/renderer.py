@@ -1,9 +1,9 @@
 import io
-import math
 import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Type
 
@@ -292,13 +292,21 @@ class BlenderRenderer(Renderer):
 
         renders_dir.mkdir(parents=True)
 
+        start_mtime_date = datetime.fromtimestamp(renders_dir.stat().st_mtime, tz=timezone.utc)
+
         renders = self.create_render_files(views, output, renders_dir)
 
         self.run_renders(file, list(renders.keys()))
 
         for render in renders.values():
-            if not Path(render.output_file).exists():
+            output_file = Path(render.output_file)
+
+            if not output_file.exists():
                 raise Exception(f"Render output file {render.output_file} does not exist")
+
+            mtime_date = datetime.fromtimestamp(output_file.stat().st_mtime, tz=timezone.utc)
+            if mtime_date < start_mtime_date:
+                raise Exception(f"Render output file {render.output_file} is outdated")
 
             for view in views:
                 if view.index == render.index:
@@ -373,7 +381,7 @@ class BlenderRenderer(Renderer):
         rotation = transform[:3, :3]
 
         if np.abs(np.linalg.det(rotation) - 1.0) > tol:
-            raise Exception(f"Invalid determinant {np.linalg.det(rotation)}, expected 1.0")
+            raise Exception(f"Invalid top left 3x3 matrix determinant {np.linalg.det(rotation)}, expected 1.0")
 
         if np.sum(rotation.T @ rotation - np.eye(3)) > tol:
             raise Exception("Top left 3x3 matrix is non-orthogonal")
@@ -384,9 +392,9 @@ class BlenderRenderer(Renderer):
 
         return (translation, euler_angles)
 
-    def run_renders(self, model_file: Path, render_files: List[Path]) -> None:
+    def run_renders(self, model_file: Path, render_files: List[Path], gpu: int = 0) -> None:
         command = (
-            f"export DISPLAY=:0.0 && {shlex.quote(str(self.config.blender_binary.absolute()))} -b"
+            f"export DISPLAY=:0.{gpu} && {shlex.quote(str(self.config.blender_binary.absolute()))} -b"
             f" -P {shlex.quote(str(blender_renderer_script_file.absolute()))}"
             f" -- --model_file {shlex.quote(str(model_file.absolute()))}"
         )

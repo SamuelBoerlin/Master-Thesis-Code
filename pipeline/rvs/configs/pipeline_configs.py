@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import replace
-from typing import Dict
+from typing import Dict, Tuple
 
 import tyro
 from lerf.lerf_config import lerf_method, lerf_method_big, lerf_method_lite
+from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.engine.trainer import TrainerConfig
 
 from rvs.lerf.lerf_datamanager import CustomLERFDataManagerConfig
 from rvs.lerf.lerf_model import CustomLERFModelConfig
 from rvs.pipeline.clustering import ElbowKMeansClusteringConfig, KMeansClusteringConfig
-from rvs.pipeline.pipeline import FieldConfig, PipelineConfig
-from rvs.pipeline.renderer import BlenderRendererConfig, TrimeshRendererConfig
+from rvs.pipeline.pipeline import FieldConfig, PipelineConfig, PipelineStage
+from rvs.pipeline.renderer import BlenderRendererConfig, PyrenderRendererConfig, TrimeshRendererConfig
 from rvs.pipeline.sampler import TrimeshPositionSamplerConfig
 from rvs.pipeline.selection import BestTrainingViewSelectionConfig
 from rvs.pipeline.views import FermatSpiralViewsConfig, SphereViewsConfig
@@ -57,80 +58,90 @@ def adapt_lerf_config(config: TrainerConfig) -> TrainerConfig:
     return config
 
 
-pipeline_configs: Dict[str, PipelineConfig] = {}
-pipeline_descriptions = {
-    "default": "Default model.",
-    "default-lite": "Default big model.",
-    "default-big": "Default lite model.",
-    "elbow_kmeans": "Default model with elbow kmeans.",
-    "fermat_views": "Default model with fermat spiral views.",
-    "blender_renderer_fermat_views": "Default model with blender renderer and fermat spiral views.",
+pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]]] = {
+    PipelineStage.SAMPLE_VIEWS: {
+        "altaz_views": ("Altitude/Azimuth spherical views", SphereViewsConfig()),
+        "fermat_views": ("Fermat spiral spherical views", FermatSpiralViewsConfig()),
+    },
+    PipelineStage.RENDER_VIEWS: {
+        "pyrender_renderer": ("Pyrenderer", PyrenderRendererConfig()),
+        "trimesh_renderer": ("Trimesh", TrimeshRendererConfig()),
+        "blender_renderer": ("Blender with Objaverse scene parameters", BlenderRendererConfig()),
+    },
+    PipelineStage.SAMPLE_POSITIONS: {
+        "trimesh_sampler": ("Random face area weighted position sampler with Trimesh", TrimeshPositionSamplerConfig()),
+    },
+    PipelineStage.TRAIN_FIELD: {
+        "lerf_standard_field": ("LERF standard method", FieldConfig(trainer=adapt_lerf_config(lerf_method.config))),
+        "lerf_lite_field": ("LERF lite method", FieldConfig(trainer=adapt_lerf_config(lerf_method_lite.config))),
+        "lerf_big_field": ("LERF big method", FieldConfig(trainer=adapt_lerf_config(lerf_method_big.config))),
+    },
+    PipelineStage.CLUSTER_EMBEDDINGS: {
+        "kmeans_clustering": ("Fixed-k KMeans clustering", KMeansClusteringConfig()),
+        "elbow_kmeans_clustering": ("Variable-k KMeans clustering with elbow method", ElbowKMeansClusteringConfig()),
+    },
+    PipelineStage.SELECT_VIEWS: {
+        "best_training_selection": (
+            "Views selected from training views that are most similar to cluster embeddings",
+            BestTrainingViewSelectionConfig(),
+        ),
+    },
 }
 
-pipeline_configs["default"] = PipelineConfig(
-    method_name="default",
-    views=SphereViewsConfig(),
-    renderer=TrimeshRendererConfig(),
-    field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
-    sampler=TrimeshPositionSamplerConfig(),
-    clustering=KMeansClusteringConfig(),
-    selection=BestTrainingViewSelectionConfig(),
-)
+pipeline_configs: Dict[str, PipelineConfig] = dict()
+pipeline_descriptions: Dict[str, str] = dict()
 
-pipeline_configs["default-lite"] = PipelineConfig(
-    method_name="default-lite",
-    views=SphereViewsConfig(),
-    renderer=TrimeshRendererConfig(),
-    field=FieldConfig(trainer=adapt_lerf_config(lerf_method_lite.config)),
-    sampler=TrimeshPositionSamplerConfig(),
-    clustering=KMeansClusteringConfig(),
-    selection=BestTrainingViewSelectionConfig(),
-)
+for views_method, (views_description, views_config) in pipeline_components[PipelineStage.SAMPLE_VIEWS].items():
+    for renderer_method, (renderer_description, renderer_config) in pipeline_components[
+        PipelineStage.RENDER_VIEWS
+    ].items():
+        for sampler_method, (sampler_description, sampler_config) in pipeline_components[
+            PipelineStage.SAMPLE_POSITIONS
+        ].items():
+            for field_method, (field_description, field_config) in pipeline_components[
+                PipelineStage.TRAIN_FIELD
+            ].items():
+                for clustering_method, (clustering_description, clustering_config) in pipeline_components[
+                    PipelineStage.CLUSTER_EMBEDDINGS
+                ].items():
+                    for selection_method, (selection_description, selection_config) in pipeline_components[
+                        PipelineStage.SELECT_VIEWS
+                    ].items():
+                        method = ".".join(
+                            [
+                                views_method,
+                                renderer_method,
+                                sampler_method,
+                                field_method,
+                                clustering_method,
+                                selection_method,
+                            ]
+                        )
 
-pipeline_configs["default-big"] = PipelineConfig(
-    method_name="default-big",
-    views=SphereViewsConfig(),
-    renderer=TrimeshRendererConfig(),
-    field=FieldConfig(trainer=adapt_lerf_config(lerf_method_big.config)),
-    sampler=TrimeshPositionSamplerConfig(),
-    clustering=KMeansClusteringConfig(),
-    selection=BestTrainingViewSelectionConfig(),
-)
+                        description = (
+                            f"1. {views_description}\n"
+                            f"2. {renderer_description}\n"
+                            f"3. {sampler_description}\n"
+                            f"4. {field_description}\n"
+                            f"5. {clustering_description}\n"
+                            f"6. {selection_description}\n"
+                        )
 
-pipeline_configs["elbow_kmeans"] = PipelineConfig(
-    method_name="elbow_kmeans",
-    views=SphereViewsConfig(),
-    renderer=TrimeshRendererConfig(),
-    field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
-    sampler=TrimeshPositionSamplerConfig(),
-    clustering=ElbowKMeansClusteringConfig(),
-    selection=BestTrainingViewSelectionConfig(),
-)
+                        config = PipelineConfig(
+                            method_name=method,
+                            views=views_config,
+                            renderer=renderer_config,
+                            sampler=sampler_config,
+                            field=field_config,
+                            clustering=clustering_config,
+                            selection=selection_config,
+                        )
 
-pipeline_configs["fermat_views"] = PipelineConfig(
-    method_name="fermat_views",
-    views=FermatSpiralViewsConfig(),
-    renderer=TrimeshRendererConfig(),
-    field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
-    sampler=TrimeshPositionSamplerConfig(),
-    clustering=KMeansClusteringConfig(),
-    selection=BestTrainingViewSelectionConfig(),
-)
-
-pipeline_configs["blender_renderer_fermat_views"] = PipelineConfig(
-    method_name="blender_renderer_fermat_views",
-    views=FermatSpiralViewsConfig(),
-    renderer=BlenderRendererConfig(),
-    field=FieldConfig(trainer=adapt_lerf_config(lerf_method.config)),
-    sampler=TrimeshPositionSamplerConfig(),
-    clustering=KMeansClusteringConfig(),
-    selection=BestTrainingViewSelectionConfig(),
-)
-
-all_methods, all_descriptions = pipeline_configs, pipeline_descriptions
+                        pipeline_configs[method] = config
+                        pipeline_descriptions[method] = description
 
 AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[
     tyro.conf.FlagConversionOff[
-        tyro.extras.subcommand_type_from_defaults(defaults=all_methods, descriptions=all_descriptions)
+        tyro.extras.subcommand_type_from_defaults(defaults=pipeline_configs, descriptions=pipeline_descriptions)
     ]
 ]
