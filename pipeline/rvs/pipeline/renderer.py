@@ -1,9 +1,8 @@
 import io
-import shlex
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from multiprocessing import Process
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Type
 
@@ -22,7 +21,8 @@ from trimesh.viewer import SceneViewer
 
 from rvs.pipeline.state import PipelineState
 from rvs.pipeline.views import View
-from rvs.utils.blender_renderer import Render, save_render_json, script_file as blender_renderer_script_file
+from rvs.utils.blender_renderer import Render, renderer_worker_func, save_render_json
+from rvs.utils.process import ProcessResult, stop_process
 from rvs.utils.trimesh import normalize_scene
 
 
@@ -392,12 +392,55 @@ class BlenderRenderer(Renderer):
 
         return (translation, euler_angles)
 
-    def run_renders(self, model_file: Path, render_files: List[Path], gpu: int = 0) -> None:
-        command = (
-            f"export DISPLAY=:0.{gpu} && {shlex.quote(str(self.config.blender_binary.absolute()))} -b"
-            f" -P {shlex.quote(str(blender_renderer_script_file.absolute()))}"
-            f" -- --model_file {shlex.quote(str(model_file.absolute()))}"
-        )
-        for render_file in render_files:
-            command += f" --render_file {shlex.quote(str(render_file.absolute()))}"
-        subprocess.run(command, shell=True, check=True)
+    def run_renders(self, model_file: Path, render_files: List[Path], processes: int = 4, gpu: int = 0) -> None:
+        if processes < 1:
+            raise ValueError(f"processes ({processes}) < 1")
+
+        chunks: List[List[Path]] = [[] for _ in range(processes)]
+
+        for i in range(len(render_files)):
+            chunks[i % processes].append(render_files[i])
+
+        processes: List[Tuple[Process, ProcessResult]] = []
+
+        try:
+            for chunk in chunks:
+                if len(chunk) > 0:
+                    result = ProcessResult()
+
+                    process = Process(
+                        target=renderer_worker_func,
+                        args=(self.config.blender_binary, model_file, chunk, gpu, result),
+                        daemon=True,
+                    )
+
+                    processes.append((process, result))
+
+                    process.start()
+
+            for process, result in processes:
+                process.join()
+
+                if not result.success:
+                    if result.msg is not None:
+                        raise Exception(f"Renderer failed due to exception:\n{result.msg}")
+                    else:
+                        raise Exception("Renderer failed due to unknown reason")
+
+        finally:
+            for process, result in processes:
+                try:
+                    result.close()
+                except Exception:
+                    pass
+
+                try:
+                    stop_process(process)
+                    process.join()
+                except Exception:
+                    pass
+
+                try:
+                    process.close()
+                except Exception:
+                    pass

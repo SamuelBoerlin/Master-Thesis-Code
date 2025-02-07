@@ -1,11 +1,10 @@
+import multiprocessing
 import os
 import signal
+from multiprocessing import Process, Queue, set_start_method
 from queue import Empty, Full
 from time import sleep, time
 from typing import Any, Iterable, Optional
-
-import torch.multiprocessing
-from torch.multiprocessing import Process, Queue, set_start_method
 
 
 class ProcessResult:
@@ -16,8 +15,8 @@ class ProcessResult:
     __cached_msg: str = None
 
     def __init__(self) -> None:
-        self.__success_queue = torch.multiprocessing.Queue(maxsize=1)
-        self.__msg_queue = torch.multiprocessing.Queue(maxsize=1)
+        self.__success_queue = multiprocessing.Queue(maxsize=1)
+        self.__msg_queue = multiprocessing.Queue(maxsize=1)
 
     @property
     def success(self) -> bool:
@@ -72,12 +71,12 @@ class ProcessResult:
         self.close()
 
 
-def start_process(target: Any, args: Iterable[Any]) -> Process:
+def start_process(target: Any, args: Iterable[Any], daemon: bool = False) -> Process:
     set_start_method("spawn", force=True)  # Required for CUDA: https://pytorch.org/docs/main/notes/multiprocessing.html
     process = Process(
         target=target,
         args=args,
-        daemon=True,
+        daemon=daemon,
     )
     process.start()
     return process

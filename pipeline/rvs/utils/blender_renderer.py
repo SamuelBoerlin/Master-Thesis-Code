@@ -1,9 +1,12 @@
 import argparse
 import json
+import shlex
+import subprocess
 import sys
+import traceback
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import bpy
 
@@ -15,6 +18,7 @@ try:
         reset_scene,
         set_scene_render_parameters,
     )
+    from rvs.utils.process import ProcessResult
 except ImportError:
     sys.path.append(str(Path(__file__).resolve().parent))
     from blender_renderer_objaverse import (
@@ -24,8 +28,53 @@ except ImportError:
         reset_scene,
         set_scene_render_parameters,
     )
+    from process import ProcessResult
 
-script_file = Path(__file__).resolve().parent / (Path(__file__).stem + ".py")
+
+def renderer_worker_func(
+    blender_binary: Path,
+    model_file: Path,
+    render_files: List[Path],
+    gpu: int = 0,
+    result: Optional[ProcessResult] = None,
+) -> None:
+    try:
+        script_file = Path(__file__).resolve().parent / (Path(__file__).stem + ".py")
+
+        if not script_file.exists():
+            raise Exception("Unable to locate .py file of renderer")
+
+        if not blender_binary.exists():
+            raise Exception(f"Blender binary {str(blender_binary)} does not exist")
+
+        if not model_file.exists():
+            raise Exception(f"Model file {str(model_file)} does not exist")
+
+        command = (
+            f"export DISPLAY=:0.{gpu} && {shlex.quote(str(blender_binary.absolute()))} -b"
+            f" -P {shlex.quote(str(script_file.absolute()))}"
+            f" -- --model_file {shlex.quote(str(model_file.absolute()))}"
+        )
+
+        for render_file in render_files:
+            if not render_file.exists():
+                raise Exception(f"Render file {str(render_file)} does not exist")
+
+            command += f" --render_file {shlex.quote(str(render_file.absolute()))}"
+
+        subprocess.run(command, shell=True, check=True)
+
+        if result is not None:
+            result.success = True
+            result.close()
+    except BaseException as ex:
+        msg = traceback.format_exc()
+        print(msg, file=sys.stderr, flush=True)
+        if result is not None:
+            result.success = False
+            result.msg = msg
+            result.close()
+        raise ex
 
 
 @dataclass

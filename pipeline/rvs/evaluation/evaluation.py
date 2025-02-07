@@ -593,6 +593,10 @@ class Evaluation:
                 try:
                     stop_process(process)
                     process.join()
+                except Exception:
+                    pass
+
+                try:
                     process.close()
                 except Exception:
                     pass
