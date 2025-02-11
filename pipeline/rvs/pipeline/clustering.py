@@ -105,10 +105,11 @@ class ElbowKMeansClusteringConfig(RangedKClusteringConfig):
     fraction_between_first_and_last_distortion: Optional[float] = 0.5
     """Selects number of clusters based on the specified fraction of distortion between the first and last probe distortion"""
 
+    trials_per_k: int = 1  # TODO Multiple runs per k and avg. distortion incl. outlier rejection
+    """Number of times clustering should be done per k. Distortion is averaged over the trials before elbow method and the clustering with lowest distortion for the selected k is used in the end."""
+
     whitening: bool = True
     """Whether whitening should be done before K-Means clustering"""
-
-    # TODO Multiple runs per k and avg. distortion incl. outlier rejection
 
     # TODO Try method with closest point to origin (requires distortion / Y axis scaling parameter)
 

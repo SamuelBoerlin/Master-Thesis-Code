@@ -1,3 +1,4 @@
+import json
 import traceback
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -21,6 +22,7 @@ from rvs.evaluation.worker import pipeline_worker_func
 from rvs.pipeline.pipeline import PipelineConfig, PipelineStage
 from rvs.utils.config import find_changed_config_fields, find_config_working_dir, load_config
 from rvs.utils.console import file_link
+from rvs.utils.hash import hash_file_sha1
 from rvs.utils.logging import create_logger
 from rvs.utils.process import ProcessResult, start_process, stop_process
 
@@ -65,8 +67,14 @@ class EvaluationConfig(InstantiateConfig):
     lvis_categories: Optional[Set[str]] = None
     """List of LVIS categories used in the evaluation (unconfigured = all)"""
 
+    lvis_categories_file: Optional[Path] = None
+    """Same as lvis_categories but loaded from the array in the specified .json file"""
+
     lvis_uids: Optional[Set[str]] = None
     """List of LVIS uids used in the evaluation (unconfigured = all)"""
+
+    lvis_uids_file: Optional[Path] = None
+    """Same as lvis_uids but loaded from the array in the specified .json file"""
 
     lvis_download_processes: int = 8
     """Number of processes to use for downloading the 3D model files"""
@@ -168,18 +176,35 @@ class Evaluation:
         self.embedder = self.config.embedder.setup()
 
         CONSOLE.log("Setting up dataset...")
+
+        lvis_categories = self.config.lvis_categories
+        if self.config.lvis_categories_file is not None:
+            if lvis_categories is None:
+                lvis_categories = set()
+            with self.config.lvis_categories_file.open("r") as f:
+                lvis_categories = lvis_categories.union(set(json.load(f)))
+
+        lvis_uids = self.config.lvis_uids
+        if self.config.lvis_uids_file is not None:
+            if lvis_uids is None:
+                lvis_uids = set()
+            with self.config.lvis_uids_file.open("r") as f:
+                lvis_uids = lvis_uids.union(set(json.load(f)))
+
         self.lvis = LVISDataset(
-            self.config.lvis_categories,
-            self.config.lvis_uids,
+            lvis_categories,
+            lvis_uids,
             self.config.lvis_download_processes,
             self.config.lvis_per_category_limit,
         )
+
         if self.lvis.load_cache(self.lvis_cache_dir) is None:
             self.lvis.load()
             self.lvis.save_cache(self.lvis_cache_dir)
 
     def __populate_tracking_metadata(self, old_metadata: Dict[str, str]) -> Dict[str, str]:
         new_metadata: Dict[str, str] = dict()
+
         try:
             source_path = Path(__file__).resolve()
             with Repo(path=source_path.parent, search_parent_directories=True) as repo:
@@ -194,6 +219,19 @@ class Evaluation:
                 new_metadata["git_commit_hash"] = hash_list
         except InvalidGitRepositoryError:
             pass
+
+        if self.config.lvis_categories_file is not None:
+            try:
+                new_metadata["lvis_categories_file_hash"] = hash_file_sha1(self.config.lvis_categories_file)
+            except FileNotFoundError:
+                pass
+
+        if self.config.lvis_uids_file is not None:
+            try:
+                new_metadata["lvis_uids_file_hash"] = hash_file_sha1(self.config.lvis_uids_file)
+            except FileNotFoundError:
+                pass
+
         return new_metadata
 
     def __setup_inputs(self) -> Optional[List[PipelineEvaluationInstance]]:
