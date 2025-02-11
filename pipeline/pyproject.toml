@@ -18,6 +18,7 @@ include = ["rvs*"]
 [project.scripts]
 rvs = "rvs.scripts.rvs:entrypoint"
 ervs = "rvs.scripts.ervs:entrypoint"
+rvs_dataset = "rvs.scripts.rvs_dataset:entrypoint"
 
 #[project.entry-points.'rvs.pipelines']
 #default = 'rvs.rvs_configs:default_pipeline'
