@@ -122,7 +122,7 @@ def plot_elbows_samples(
 
             elbow_file = instance.create_pipeline_io(model_file).get_path(
                 PipelineStage.CLUSTER_EMBEDDINGS,
-                Path("clustering") / "scratch" / "elbow.json",
+                Path("clustering") / "scratch" / "elbow" / "avg.json",
             )
 
             if elbow_file.exists() and elbow_file.is_file():

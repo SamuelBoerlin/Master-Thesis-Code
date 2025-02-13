@@ -1,3 +1,4 @@
+import shutil
 from dataclasses import dataclass, field
 from typing import Tuple, Type
 
@@ -220,9 +221,31 @@ class ElbowKMeansClustering(Clustering):
                 pred_frac_k_d=pred_frac_k_distortion,
             )
 
-            save_elbow(pipeline_state.scratch_output_dir / "elbow.json", avg_elbow)
-            save_elbow(pipeline_state.scratch_output_dir / "min_elbow.json", min_elbow)
-            save_elbow(pipeline_state.scratch_output_dir / "max_elbow.json", max_elbow)
+            elbows_dir = pipeline_state.scratch_output_dir / "elbow"
+
+            if elbows_dir.exists():
+                shutil.rmtree(elbows_dir)
+
+            elbows_dir.mkdir(parents=True)
+
+            save_elbow(elbows_dir / "avg.json", avg_elbow)
+            save_elbow(elbows_dir / "min.json", min_elbow)
+            save_elbow(elbows_dir / "max.json", max_elbow)
+
+            all_elbows_dir = elbows_dir / "all"
+            all_elbows_dir.mkdir(parents=True)
+
+            for i in range(self.config.trials_per_k):
+                i_elbow = Elbow(
+                    ks=num_clusters,
+                    ds=[k_distortions[i] for k_distortions in distortions],
+                    pred_k=pred_k,
+                    pred_k_d=best_pred_k_distortion,
+                    pred_frac_k=pred_frac_k,
+                    pred_frac_k_d=pred_frac_k_distortion,
+                )
+
+                save_elbow(all_elbows_dir / f"{i}.json", i_elbow)
 
             fig, ax = plt.subplots()
 
