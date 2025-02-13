@@ -35,8 +35,8 @@ def start_evaluation(eval_config: EvaluationConfig) -> None:
         eval_config.runtime.metadata = dict()
 
     eval_config.runtime.metadata["args"] = sys.argv
-    eval_config.runtime.metadata["unix_shell_command"] = sys.argv[0] + " ".join(
-        [arg if arg.startswith("--") else quote(arg) for arg in sys.argv[1:]]
+    eval_config.runtime.metadata["unix_shell_command"] = (
+        sys.argv[0] + " " + " ".join([arg if arg.startswith("--") else quote(arg) for arg in sys.argv[1:]])
     )
 
     run_evaluation(eval_config)

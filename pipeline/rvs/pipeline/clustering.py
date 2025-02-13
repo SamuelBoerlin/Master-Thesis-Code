@@ -105,7 +105,7 @@ class ElbowKMeansClusteringConfig(RangedKClusteringConfig):
     fraction_between_first_and_last_distortion: Optional[float] = 0.5
     """Selects number of clusters based on the specified fraction of distortion between the first and last probe distortion"""
 
-    trials_per_k: int = 1  # TODO Multiple runs per k and avg. distortion incl. outlier rejection
+    trials_per_k: int = 5
     """Number of times clustering should be done per k. Distortion is averaged over the trials before elbow method and the clustering with lowest distortion for the selected k is used in the end."""
 
     whitening: bool = True
@@ -117,37 +117,52 @@ class ElbowKMeansClusteringConfig(RangedKClusteringConfig):
 class ElbowKMeansClustering(Clustering):
     config: ElbowKMeansClusteringConfig
 
+    def __cluster(
+        self, samples: NDArray, pipeline_state: PipelineState, k: int, rounds: int
+    ) -> Tuple[List[NDArray], List[float]]:
+        k_centroids: List[NDArray] = []
+        k_distortions: List[float] = []
+
+        for j in range(rounds):
+            k_centroid, k_distortion = KMeansClustering.kmeans_clustering(
+                samples,
+                k,
+                self.config.whitening,
+                pipeline_state.pipeline.config.machine.seed + j,
+                True,
+            )
+
+            k_centroids.append(k_centroid)
+            k_distortions.append(float(k_distortion))
+
+        return (k_centroids, k_distortions)
+
     def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> NDArray:
-        centroids: List[NDArray] = []
-        distortions: List[float] = []
+        centroids: List[List[NDArray]] = []
+        distortions: List[List[float]] = []
 
         num_clusters = list(range(self.config.min_clusters, self.config.max_clusters + 1))
         if self.config.last_probe_cluster_number is not None:
             num_clusters.append(self.config.last_probe_cluster_number)
 
         for k in num_clusters:
-            k_centroids, distortion = KMeansClustering.kmeans_clustering(
-                samples,
-                k,
-                self.config.whitening,
-                pipeline_state.pipeline.config.machine.seed,
-                True,
-            )
-
+            k_centroids, k_distortions = self.__cluster(samples, pipeline_state, k, self.config.trials_per_k)
             centroids.append(k_centroids)
-            distortions.append(float(distortion))
+            distortions.append(k_distortions)
+
+        avg_distortions = [np.mean(np.array(k_distortions)) for k_distortions in distortions]
 
         pred_frac_k_distortion = (
-            distortions[-1]
-            + (distortions[0] - distortions[-1]) * self.config.fraction_between_first_and_last_distortion
+            avg_distortions[-1]
+            + (avg_distortions[0] - avg_distortions[-1]) * self.config.fraction_between_first_and_last_distortion
         )
 
         pred_k = 0
         pred_frac_k = 0.0
 
-        for i in range(len(distortions) - 1):
-            upper_distortion = distortions[i]
-            lower_distortion = distortions[i + 1]
+        for i in range(len(distortions)):
+            upper_distortion = avg_distortions[i]
+            lower_distortion = avg_distortions[i + 1]
 
             if pred_frac_k_distortion >= lower_distortion and pred_frac_k_distortion <= upper_distortion:
                 fraction = (pred_frac_k_distortion - lower_distortion) / (upper_distortion - lower_distortion)
@@ -156,41 +171,77 @@ class ElbowKMeansClustering(Clustering):
 
         pred_k = int(round(pred_frac_k))
 
-        pred_k_centroids: NDArray = None
-        pred_k_distortion: float = None
+        pred_k_centroids: List[NDArray] = None
+        pred_k_distortions: List[float] = None
 
         try:
             pred_k_i = num_clusters.index(pred_k)
             pred_k_centroids = centroids[pred_k_i]
-            pred_k_distortion = distortions[pred_k_i]
+            pred_k_distortions = distortions[pred_k_i]
         except ValueError:
-            pass
+            pred_k_centroids, pred_k_distortions = self.__cluster(
+                samples, pipeline_state, pred_k, self.config.trials_per_k
+            )
 
-        pred_k_centroids, pred_k_distortion = KMeansClustering.kmeans_clustering(
-            samples,
-            pred_k,
-            self.config.whitening,
-            pipeline_state.pipeline.config.machine.seed,
-            True,
-        )
-        pred_k_distortion = float(pred_k_distortion)
+        best_pred_k_centroid: NDArray
+        best_pred_k_distortion: float
+
+        best_trial_idx = np.argmin(pred_k_distortions)
+        best_pred_k_centroid = pred_k_centroids[best_trial_idx]
+        best_pred_k_distortion = pred_k_distortions[best_trial_idx]
+
+        best_pred_k_centroid = best_pred_k_centroid / np.linalg.norm(best_pred_k_centroid, axis=1, keepdims=True)
 
         if pipeline_state.scratch_output_dir is not None:
-            elbow = Elbow(
+            avg_elbow = Elbow(
                 ks=num_clusters,
-                ds=distortions,
+                ds=avg_distortions,
                 pred_k=pred_k,
-                pred_k_d=pred_k_distortion,
+                pred_k_d=best_pred_k_distortion,
                 pred_frac_k=pred_frac_k,
                 pred_frac_k_d=pred_frac_k_distortion,
             )
 
-            save_elbow(pipeline_state.scratch_output_dir / "elbow.json", elbow)
+            min_elbow = Elbow(
+                ks=num_clusters,
+                ds=[np.min(np.array(k_distortions)) for k_distortions in distortions],
+                pred_k=pred_k,
+                pred_k_d=best_pred_k_distortion,
+                pred_frac_k=pred_frac_k,
+                pred_frac_k_d=pred_frac_k_distortion,
+            )
+
+            max_elbow = Elbow(
+                ks=num_clusters,
+                ds=[np.max(np.array(k_distortions)) for k_distortions in distortions],
+                pred_k=pred_k,
+                pred_k_d=best_pred_k_distortion,
+                pred_frac_k=pred_frac_k,
+                pred_frac_k_d=pred_frac_k_distortion,
+            )
+
+            save_elbow(pipeline_state.scratch_output_dir / "elbow.json", avg_elbow)
+            save_elbow(pipeline_state.scratch_output_dir / "min_elbow.json", min_elbow)
+            save_elbow(pipeline_state.scratch_output_dir / "max_elbow.json", max_elbow)
 
             fig, ax = plt.subplots()
 
-            elbow_plot(ax, elbow)
+            flags = [True, False, False]
+            linestyles = ["-", "--", "--"]
+
+            elbow_plot(
+                ax,
+                elbow=[avg_elbow, min_elbow, max_elbow],
+                pred_point=flags,
+                pred_frac_point=flags,
+                pred_hlines=flags,
+                pred_vlines=flags,
+                pred_frac_hlines=flags,
+                pred_frac_vlines=flags,
+                colors=None,
+                linestyles=linestyles,
+            )
 
             save_figure(fig, pipeline_state.scratch_output_dir / "elbow.png")
 
-        return pred_k_centroids
+        return best_pred_k_centroid

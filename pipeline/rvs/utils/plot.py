@@ -312,16 +312,35 @@ def elbow_plot(
     elbow: Union[Elbow, List[Elbow]],
     xlabel: str = None,
     ylabel: str = None,
-    pred_point: bool = True,
-    pred_frac_point: bool = True,
-    pred_hlines: bool = True,
-    pred_vlines: bool = True,
-    pred_frac_hlines: bool = True,
-    pred_frac_vlines: bool = True,
+    pred_point: List[bool] = True,
+    pred_frac_point: List[bool] = True,
+    pred_hlines: List[bool] = True,
+    pred_vlines: List[bool] = True,
+    pred_frac_hlines: List[bool] = True,
+    pred_frac_vlines: List[bool] = True,
     colors: List[Any] = "auto",
+    linestyles: List[Any] = "auto",
 ) -> None:
     if isinstance(elbow, Elbow):
         elbow = [elbow]
+
+    if isinstance(pred_point, bool):
+        pred_point = [pred_point] * len(elbow)
+
+    if isinstance(pred_frac_point, bool):
+        pred_frac_point = [pred_frac_point] * len(elbow)
+
+    if isinstance(pred_hlines, bool):
+        pred_hlines = [pred_hlines] * len(elbow)
+
+    if isinstance(pred_vlines, bool):
+        pred_vlines = [pred_vlines] * len(elbow)
+
+    if isinstance(pred_frac_hlines, bool):
+        pred_frac_hlines = [pred_frac_hlines] * len(elbow)
+
+    if isinstance(pred_frac_vlines, bool):
+        pred_frac_vlines = [pred_frac_vlines] * len(elbow)
 
     if colors == "auto":
         if len(elbow) > 1:
@@ -329,20 +348,48 @@ def elbow_plot(
         else:
             colors = None
 
+    if linestyles == "auto":
+        linestyles = None
+
+    if len(pred_point) != len(elbow):
+        raise ValueError("len(pred_point) != len(elbow)")
+
+    if len(pred_frac_point) != len(elbow):
+        raise ValueError("len(pred_frac_point) != len(elbow)")
+
+    if len(pred_hlines) != len(elbow):
+        raise ValueError("len(pred_hlines) != len(elbow)")
+
+    if len(pred_vlines) != len(elbow):
+        raise ValueError("len(pred_vlines) != len(elbow)")
+
+    if len(pred_frac_hlines) != len(elbow):
+        raise ValueError("len(pred_frac_hlines) != len(elbow)")
+
+    if len(pred_frac_vlines) != len(elbow):
+        raise ValueError("len(pred_frac_vlines) != len(elbow)")
+
     if colors is not None and len(colors) != len(elbow):
         raise ValueError("len(colors) != len(elbow)")
+
+    if linestyles is not None and len(linestyles) != len(elbow):
+        raise ValueError("len(linestyles) != len(elbow)")
 
     for i, e in enumerate(elbow):
         color = "C0"
         if colors is not None:
             color = colors[i]
 
-        ax.plot(e.ks, e.ds, color=color)
+        linestyle = None
+        if linestyles is not None:
+            linestyle = linestyles[i]
 
-        if pred_frac_point:
+        ax.plot(e.ks, e.ds, color=color, linestyle=linestyle)
+
+        if pred_frac_point[i]:
             ax.plot(e.pred_frac_k, e.pred_frac_k_d, "o", color=color, fillstyle="none")
 
-        if pred_point:
+        if pred_point[i]:
             ax.plot(e.pred_k, e.pred_k_d, "o", color=color, fillstyle="full")
 
         # FIXME
@@ -352,16 +399,16 @@ def elbow_plot(
     ylim = ax.get_ylim()
 
     for e in elbow:
-        if pred_frac_hlines:
+        if pred_frac_hlines[i]:
             ax.hlines(e.pred_frac_k_d, -1000, e.pred_frac_k, color="gray", linestyle="--", alpha=0.5, zorder=0)
 
-        if pred_hlines:
+        if pred_hlines[i]:
             ax.hlines(e.pred_k_d, -1000, e.pred_k, color="gray", linestyle="--", alpha=0.5, zorder=0)
 
-        if pred_frac_vlines:
+        if pred_frac_vlines[i]:
             ax.vlines(e.pred_frac_k, -1000, e.pred_frac_k_d, color="gray", linestyle="--", alpha=0.5, zorder=0)
 
-        if pred_vlines:
+        if pred_vlines[i]:
             ax.vlines(e.pred_k, -1000, e.pred_k_d, color="gray", linestyle="--", alpha=0.5, zorder=0)
 
     if xlabel is not None:

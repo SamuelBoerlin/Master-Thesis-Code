@@ -53,6 +53,9 @@ class RuntimeSettings(PrintableConfig):
     results_only: bool = False
     """Run results part only"""
 
+    partial_results: bool = False
+    """Run results part even if not all objects have been processed yet"""
+
     set_read_only: Optional[bool] = None
     """Sets the data to be read-only and exists immediately after if flag set"""
 
@@ -344,18 +347,16 @@ class Evaluation:
                 else:
                     aborted = not self.__run_object_by_object(run)
 
-            if aborted:
-                return False
+            if not aborted or self.config.runtime.partial_results:
+                evaluate_results(
+                    self.lvis,
+                    self.embedder,
+                    run.instance,
+                    self.config.seed,
+                    self.results_dir,
+                )
 
-            evaluate_results(
-                self.lvis,
-                self.embedder,
-                run.instance,
-                self.config.seed,
-                self.results_dir,
-            )
-
-            return True
+            return not aborted
 
     def __create_run_dir(self) -> Path:
         base_name = datetime.now().strftime("%Y-%m-%d_%H%M%S")
