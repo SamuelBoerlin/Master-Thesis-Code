@@ -85,9 +85,12 @@ class SelectUidsInCategories(Command):
 
             filtered_category_uids: List[str] = [uid for uid in category_uids if uid not in excluded_uids]
 
+            if len(filtered_category_uids) < self.count:
+                raise ValueError(f"Insufficient number of uids available ({len(filtered_category_uids)})")
+
             selection_rng = np.random.default_rng(seed=main_rng)
 
-            for _ in range(min(len(filtered_category_uids), self.count)):
+            for _ in range(self.count):
                 idx = selection_rng.integers(low=0, high=len(filtered_category_uids))
                 uids.append(filtered_category_uids[idx])
                 del filtered_category_uids[idx]
