@@ -100,63 +100,42 @@ class KMeansClustering(Clustering):
 class ElbowKMeansClusteringConfig(RangedKClusteringConfig):
     _target: Type = field(default_factory=lambda: ElbowKMeansClustering)
 
-    last_probe_cluster_number: Optional[int] = 10
-    """Number of clusters for last probe"""
-
-    fraction_between_first_and_last_distortion: Optional[float] = 0.5
-    """Selects number of clusters based on the specified fraction of distortion between the first and last probe distortion"""
-
     trials_per_k: int = 5
     """Number of times clustering should be done per k. Distortion is averaged over the trials before elbow method and the clustering with lowest distortion for the selected k is used in the end."""
 
     whitening: bool = True
     """Whether whitening should be done before K-Means clustering"""
 
-    # TODO Try method with closest point to origin (requires distortion / Y axis scaling parameter)
-
 
 class ElbowKMeansClustering(Clustering):
     config: ElbowKMeansClusteringConfig
 
-    def __cluster(
-        self, samples: NDArray, pipeline_state: PipelineState, k: int, rounds: int
-    ) -> Tuple[List[NDArray], List[float]]:
-        k_centroids: List[NDArray] = []
-        k_distortions: List[float] = []
+    _num_clusters: List[int]
 
-        for j in range(rounds):
-            k_centroid, k_distortion = KMeansClustering.kmeans_clustering(
-                samples,
-                k,
-                self.config.whitening,
-                pipeline_state.pipeline.config.machine.seed + j,
-                True,
-            )
+    def __init__(
+        self,
+        config: ElbowKMeansClusteringConfig,
+        num_clusters: Optional[List[int]] = None,
+    ) -> None:
+        super().__init__(config)
 
-            k_centroids.append(k_centroid)
-            k_distortions.append(float(k_distortion))
-
-        return (k_centroids, k_distortions)
+        if num_clusters is not None:
+            self._num_clusters = list(num_clusters)
+        else:
+            self._num_clusters = list(range(self.config.min_clusters, self.config.max_clusters + 1))
 
     def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> NDArray:
         centroids: List[List[NDArray]] = []
         distortions: List[List[float]] = []
 
-        num_clusters = list(range(self.config.min_clusters, self.config.max_clusters + 1))
-        if self.config.last_probe_cluster_number is not None:
-            num_clusters.append(self.config.last_probe_cluster_number)
-
-        for k in num_clusters:
+        for k in self._num_clusters:
             k_centroids, k_distortions = self.__cluster(samples, pipeline_state, k, self.config.trials_per_k)
             centroids.append(k_centroids)
             distortions.append(k_distortions)
 
         avg_distortions = [np.mean(np.array(k_distortions)) for k_distortions in distortions]
 
-        pred_frac_k_distortion = (
-            avg_distortions[-1]
-            + (avg_distortions[0] - avg_distortions[-1]) * self.config.fraction_between_first_and_last_distortion
-        )
+        pred_frac_k_distortion = self._select_distortion(self._num_clusters, avg_distortions)
 
         pred_k = 0
         pred_frac_k = 0.0
@@ -167,7 +146,7 @@ class ElbowKMeansClustering(Clustering):
 
             if pred_frac_k_distortion >= lower_distortion and pred_frac_k_distortion <= upper_distortion:
                 fraction = (pred_frac_k_distortion - lower_distortion) / (upper_distortion - lower_distortion)
-                pred_frac_k = num_clusters[i + 1] + (num_clusters[i] - num_clusters[i + 1]) * fraction
+                pred_frac_k = self._num_clusters[i + 1] + (self._num_clusters[i] - self._num_clusters[i + 1]) * fraction
                 break
 
         pred_k = int(round(pred_frac_k))
@@ -176,7 +155,7 @@ class ElbowKMeansClustering(Clustering):
         pred_k_distortions: List[float] = None
 
         try:
-            pred_k_i = num_clusters.index(pred_k)
+            pred_k_i = self._num_clusters.index(pred_k)
             pred_k_centroids = centroids[pred_k_i]
             pred_k_distortions = distortions[pred_k_i]
         except ValueError:
@@ -195,7 +174,7 @@ class ElbowKMeansClustering(Clustering):
 
         if pipeline_state.scratch_output_dir is not None:
             avg_elbow = Elbow(
-                ks=num_clusters,
+                ks=self._num_clusters,
                 ds=avg_distortions,
                 pred_k=pred_k,
                 pred_k_d=best_pred_k_distortion,
@@ -204,7 +183,7 @@ class ElbowKMeansClustering(Clustering):
             )
 
             min_elbow = Elbow(
-                ks=num_clusters,
+                ks=self._num_clusters,
                 ds=[np.min(np.array(k_distortions)) for k_distortions in distortions],
                 pred_k=pred_k,
                 pred_k_d=best_pred_k_distortion,
@@ -213,7 +192,7 @@ class ElbowKMeansClustering(Clustering):
             )
 
             max_elbow = Elbow(
-                ks=num_clusters,
+                ks=self._num_clusters,
                 ds=[np.max(np.array(k_distortions)) for k_distortions in distortions],
                 pred_k=pred_k,
                 pred_k_d=best_pred_k_distortion,
@@ -237,7 +216,7 @@ class ElbowKMeansClustering(Clustering):
 
             for i in range(self.config.trials_per_k):
                 i_elbow = Elbow(
-                    ks=num_clusters,
+                    ks=self._num_clusters,
                     ds=[k_distortions[i] for k_distortions in distortions],
                     pred_k=pred_k,
                     pred_k_d=best_pred_k_distortion,
@@ -268,3 +247,92 @@ class ElbowKMeansClustering(Clustering):
             save_figure(fig, pipeline_state.scratch_output_dir / "elbow.png")
 
         return best_pred_k_centroid
+
+    def __cluster(
+        self, samples: NDArray, pipeline_state: PipelineState, k: int, rounds: int
+    ) -> Tuple[List[NDArray], List[float]]:
+        k_centroids: List[NDArray] = []
+        k_distortions: List[float] = []
+
+        for j in range(rounds):
+            k_centroid, k_distortion = KMeansClustering.kmeans_clustering(
+                samples,
+                k,
+                self.config.whitening,
+                pipeline_state.pipeline.config.machine.seed + j,
+                True,
+            )
+
+            k_centroids.append(k_centroid)
+            k_distortions.append(float(k_distortion))
+
+        return (k_centroids, k_distortions)
+
+    def _select_distortion(self, ks: List[int], ds: List[float]) -> int:
+        pass
+
+
+@dataclass
+class FractionalElbowKMeansClusteringConfig(ElbowKMeansClusteringConfig):
+    _target: Type = field(default_factory=lambda: FractionalElbowKMeansClustering)
+
+    last_probe_cluster_number: Optional[int] = 10
+    """Number of clusters for last probe"""
+
+    fraction_between_first_and_last_distortion: Optional[float] = 0.5
+    """Selects number of clusters based on the specified fraction of distortion between the first and last probe distortion"""
+
+
+class FractionalElbowKMeansClustering(ElbowKMeansClustering):
+    config: FractionalElbowKMeansClusteringConfig
+
+    def __init__(self, config: FractionalElbowKMeansClusteringConfig) -> None:
+        num_clusters = list(range(config.min_clusters, config.max_clusters + 1))
+
+        if config.last_probe_cluster_number is not None:
+            num_clusters.append(config.last_probe_cluster_number)
+
+        super().__init__(config, num_clusters)
+
+    def _select_distortion(self, ks: List[int], ds: List[float]) -> float:
+        return ds[-1] + (ds[0] - ds[-1]) * self.config.fraction_between_first_and_last_distortion
+
+
+@dataclass
+class ClosestElbowKMeansClusteringConfig(ElbowKMeansClusteringConfig):
+    _target: Type = field(default_factory=lambda: ClosestElbowKMeansClustering)
+
+    x_scale: float = 1.0
+    """Scaling factor for x axis (number of clusters)"""
+
+    y_scale: float = 1.0
+    """Scaling factor for y axis (distortion)"""
+
+    normalize_range: bool = True
+    """Whether the x and y axis should be normalized to a 0.0 - 1.0 range before applying scale"""
+
+
+class ClosestElbowKMeansClustering(ElbowKMeansClustering):
+    config: ClosestElbowKMeansClusteringConfig
+
+    def _select_distortion(self, ks: List[int], ds: List[float]) -> float:
+        x = np.array([float(k) for k in ks])
+        y = np.array([float(d) for d in ds])
+
+        points = np.stack([x, y], axis=1)
+
+        min = np.min(points, axis=0)
+        max = np.max(points, axis=0)
+
+        points = points - min
+
+        if self.config.normalize_range:
+            range = max - min
+            points /= range
+
+        points[:, 0] *= self.config.x_scale
+        points[:, 1] *= self.config.y_scale
+
+        distances = np.linalg.norm(points, axis=1)
+
+        return ds[np.argmin(distances)]

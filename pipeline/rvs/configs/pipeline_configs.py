@@ -11,7 +11,11 @@ from nerfstudio.engine.trainer import TrainerConfig
 
 from rvs.lerf.lerf_datamanager import CustomLERFDataManagerConfig
 from rvs.lerf.lerf_model import CustomLERFModelConfig
-from rvs.pipeline.clustering import ElbowKMeansClusteringConfig, KMeansClusteringConfig
+from rvs.pipeline.clustering import (
+    ClosestElbowKMeansClusteringConfig,
+    FractionalElbowKMeansClusteringConfig,
+    KMeansClusteringConfig,
+)
 from rvs.pipeline.pipeline import FieldConfig, PipelineConfig, PipelineStage
 from rvs.pipeline.renderer import BlenderRendererConfig, PyrenderRendererConfig, TrimeshRendererConfig
 from rvs.pipeline.sampler import TrimeshPositionSamplerConfig
@@ -78,7 +82,14 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
     },
     PipelineStage.CLUSTER_EMBEDDINGS: {
         "kmeans_clustering": ("Fixed-k KMeans clustering", KMeansClusteringConfig()),
-        "elbow_kmeans_clustering": ("Variable-k KMeans clustering with elbow method", ElbowKMeansClusteringConfig()),
+        "frac_elbow_kmeans_clustering": (
+            "Variable-k KMeans clustering with elbow method where k is selected based on a fraction of the distortion range",
+            FractionalElbowKMeansClusteringConfig(),
+        ),
+        "closest_elbow_kmeans_clustering": (
+            "Variable-k KMeans clustering with elbow method where k is selected by the closest point to the origin",
+            ClosestElbowKMeansClusteringConfig(),
+        ),
     },
     PipelineStage.SELECT_VIEWS: {
         "best_training_selection": (

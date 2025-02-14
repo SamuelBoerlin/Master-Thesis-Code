@@ -8,6 +8,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.cm import get_cmap
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
+from matplotlib.ticker import MaxNLocator
 from matplotlib.transforms import Bbox
 from numpy.typing import NDArray
 from PIL import Image as im
@@ -414,6 +415,7 @@ def elbow_plot(
     if xlabel is not None:
         ax.set_xlabel(xlabel)
     ax.set_xlim(xlim)
+    ax.get_xaxis().set_major_locator(MaxNLocator(nbins="auto", integer=True))
 
     if ylabel is not None:
         ax.set_ylabel(ylabel)

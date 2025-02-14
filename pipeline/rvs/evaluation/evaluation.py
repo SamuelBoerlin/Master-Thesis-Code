@@ -398,7 +398,9 @@ class Evaluation:
             if metadata_removed:
                 new_config.runtime.metadata["<...>"] = "<...>"
 
-            existing_config: EvaluationConfig
+            matches = True
+
+            existing_config: EvaluationConfig = None
             try:
                 existing_config = load_config(file, EvaluationConfig, default_config_factory=None)
                 # Runtime data should be ignored in comparison except for validated metadata
@@ -408,6 +410,7 @@ class Evaluation:
                 existing_config.runtime.metadata = dict(new_config.runtime.metadata)
                 self.__set_nested_metadata(existing_config, "validated", existing_validated_metadata)
             except Exception as ex:
+                matches = False
                 err_msg = (
                     f'Unable to validate existing config "{file}" Run with runtime.override_existing=True to override.'
                 )
@@ -415,32 +418,32 @@ class Evaluation:
                 if fail_on_difference:
                     raise Exception(err_msg) from ex
 
-            matches = True
+            if existing_config is not None:
 
-            def on_missing_field(fpath, obj, fname, expected_value):
-                CONSOLE.log(f"{prefix}Found missing field {fpath}, old value: {expected_value}")
-                nonlocal matches
-                matches = False
+                def on_missing_field(fpath, obj, fname, expected_value):
+                    CONSOLE.log(f"{prefix}Found missing field {fpath}, old value: {expected_value}")
+                    nonlocal matches
+                    matches = False
 
-            def on_changed_field(fpath, obj, fname, expected_value, actual_value):
-                CONSOLE.log(
-                    f"{prefix}Found changed field {fpath}, old value: {expected_value}, new value: {actual_value}"
+                def on_changed_field(fpath, obj, fname, expected_value, actual_value):
+                    CONSOLE.log(
+                        f"{prefix}Found changed field {fpath}, old value: {expected_value}, new value: {actual_value}"
+                    )
+                    nonlocal matches
+                    matches = False
+
+                def on_unknown_field(fpath, obj, fname, actual_value):
+                    CONSOLE.log(f"{prefix}Found unexpected field {fpath}, old value: N/A, new value: {actual_value}")
+                    nonlocal matches
+                    matches = False
+
+                find_changed_config_fields(
+                    expected_config=existing_config,
+                    config=new_config,
+                    on_missing_field=on_missing_field,
+                    on_changed_field=on_changed_field,
+                    on_unknown_field=on_unknown_field,
                 )
-                nonlocal matches
-                matches = False
-
-            def on_unknown_field(fpath, obj, fname, actual_value):
-                CONSOLE.log(f"{prefix}Found unexpected field {fpath}, old value: N/A, new value: {actual_value}")
-                nonlocal matches
-                matches = False
-
-            find_changed_config_fields(
-                expected_config=existing_config,
-                config=new_config,
-                on_missing_field=on_missing_field,
-                on_changed_field=on_changed_field,
-                on_unknown_field=on_unknown_field,
-            )
 
             if matches:
                 try:
