@@ -8,18 +8,29 @@ from matplotlib.patches import Patch
 from numpy.typing import NDArray
 from PIL import Image as im
 
-from rvs.pipeline.renderer import TrimeshRenderer, TrimeshRendererConfig, View
+from rvs.pipeline.renderer import RenderOutput, TrimeshRenderer, TrimeshRendererConfig, View
+from rvs.pipeline.state import Normalization, PipelineState
 from rvs.utils.plot import cluster_colors
 
 
 def render_sample_positions(
-    file: Path, view: View, sample_positions: NDArray, callback: Callable[[View, im.Image], None]
+    file: Path,
+    view: View,
+    normalization: Normalization,
+    sample_positions: NDArray,
+    callback: Callable[[View, im.Image], None],
 ) -> None:
+    output = RenderOutput(path=None, callback=lambda view, image: render_image_plot(view, image, callback))
+
+    state = PipelineState(None)
+    state.model_normalization = normalization
+
     renderer = TrimeshRenderer(TrimeshRendererConfig())
     renderer.render(
         file,
         [view],
-        lambda view, image: render_image_plot(view, image, callback),
+        output,
+        state,
         sample_positions=sample_positions,
     )
 
@@ -27,6 +38,7 @@ def render_sample_positions(
 def render_sample_clusters(
     file: Path,
     view: View,
+    normalization: Normalization,
     sample_positions: NDArray,
     sample_embeddings: NDArray,
     sample_clusters: NDArray,
@@ -60,13 +72,22 @@ def render_sample_clusters(
                     best = sim
                     sample_colors[i] = colors[j]
 
+    output = RenderOutput(
+        path=None,
+        callback=lambda view, image: render_image_plot(
+            view, image, callback, figure_setup=color_legend(colors, labels, "Clusters")
+        ),
+    )
+
+    state = PipelineState(None)
+    state.model_normalization = normalization
+
     renderer = TrimeshRenderer(TrimeshRendererConfig())
     renderer.render(
         file,
         [view],
-        lambda view, image: render_image_plot(
-            view, image, callback, figure_setup=color_legend(colors, labels, "Clusters")
-        ),
+        output,
+        state,
         sample_positions=sample_positions,
         sample_colors=sample_colors,
     )

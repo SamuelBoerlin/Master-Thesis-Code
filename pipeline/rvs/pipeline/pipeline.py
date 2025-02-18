@@ -240,6 +240,7 @@ class Pipeline:
                     render_sample_positions(
                         self.config.model_file,
                         pipeline_state.training_views[i],
+                        pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         lambda sample_view, image: save_transforms_frame(
                             self.__io.get_output_path(self.__renderer_output_dir),
@@ -317,6 +318,7 @@ class Pipeline:
                     render_sample_clusters(
                         self.config.model_file,
                         pipeline_state.training_views[i],
+                        pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         pipeline_state.sample_embeddings,
                         pipeline_state.sample_clusters,
@@ -349,6 +351,7 @@ class Pipeline:
                     render_sample_clusters(
                         self.config.model_file,
                         view,
+                        pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         pipeline_state.sample_embeddings,
                         pipeline_state.sample_clusters,
