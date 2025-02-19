@@ -72,13 +72,13 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
         "trimesh_renderer": ("Trimesh", TrimeshRendererConfig()),
         "blender_renderer": ("Blender with Objaverse scene parameters", BlenderRendererConfig()),
     },
-    PipelineStage.SAMPLE_POSITIONS: {
-        "trimesh_sampler": ("Random face area weighted position sampler with Trimesh", TrimeshPositionSamplerConfig()),
-    },
     PipelineStage.TRAIN_FIELD: {
         "lerf_standard_field": ("LERF standard method", FieldConfig(trainer=adapt_lerf_config(lerf_method.config))),
         "lerf_lite_field": ("LERF lite method", FieldConfig(trainer=adapt_lerf_config(lerf_method_lite.config))),
         "lerf_big_field": ("LERF big method", FieldConfig(trainer=adapt_lerf_config(lerf_method_big.config))),
+    },
+    PipelineStage.SAMPLE_POSITIONS: {
+        "trimesh_sampler": ("Random face area weighted position sampler with Trimesh", TrimeshPositionSamplerConfig()),
     },
     PipelineStage.CLUSTER_EMBEDDINGS: {
         "kmeans_clustering": ("Fixed-k KMeans clustering", KMeansClusteringConfig()),
@@ -106,11 +106,9 @@ for views_method, (views_description, views_config) in pipeline_components[Pipel
     for renderer_method, (renderer_description, renderer_config) in pipeline_components[
         PipelineStage.RENDER_VIEWS
     ].items():
-        for sampler_method, (sampler_description, sampler_config) in pipeline_components[
-            PipelineStage.SAMPLE_POSITIONS
-        ].items():
-            for field_method, (field_description, field_config) in pipeline_components[
-                PipelineStage.TRAIN_FIELD
+        for field_method, (field_description, field_config) in pipeline_components[PipelineStage.TRAIN_FIELD].items():
+            for sampler_method, (sampler_description, sampler_config) in pipeline_components[
+                PipelineStage.SAMPLE_POSITIONS
             ].items():
                 for clustering_method, (clustering_description, clustering_config) in pipeline_components[
                     PipelineStage.CLUSTER_EMBEDDINGS
@@ -122,8 +120,8 @@ for views_method, (views_description, views_config) in pipeline_components[Pipel
                             [
                                 views_method,
                                 renderer_method,
-                                sampler_method,
                                 field_method,
+                                sampler_method,
                                 clustering_method,
                                 selection_method,
                             ]
@@ -132,8 +130,8 @@ for views_method, (views_description, views_config) in pipeline_components[Pipel
                         description = (
                             f"1. {views_description}\n"
                             f"2. {renderer_description}\n"
-                            f"3. {sampler_description}\n"
-                            f"4. {field_description}\n"
+                            f"3. {field_description}\n"
+                            f"4. {sampler_description}\n"
                             f"5. {clustering_description}\n"
                             f"6. {selection_description}\n"
                         )
@@ -142,8 +140,8 @@ for views_method, (views_description, views_config) in pipeline_components[Pipel
                             method_name=method,
                             views=views_config,
                             renderer=renderer_config,
-                            sampler=sampler_config,
                             field=field_config,
+                            sampler=sampler_config,
                             clustering=clustering_config,
                             selection=selection_config,
                         )
