@@ -46,15 +46,15 @@ conda create --name "$conda_env_name" --clone "$EXPERIMENT_CONDA_ENV_BASE"
 echo "Running project setup..."
 
 conda_env_setup_script="$(realpath "${EXPERIMENT_CONDA_ENV_SETUP_SCRIPT}")"
-conda run --name "$conda_env_name" --cwd "$(pwd)" "$conda_env_setup_script"
+conda run -v -v --name "$conda_env_name" --cwd "$(pwd)" --live-stream "$conda_env_setup_script"
 
 echo "Creating experiment script..."
 
 experiment_script_file="${PWD}/experiment_script.sh"
 cat >"$experiment_script_file" <<EOF
 #!${SHELL}
-cd "${PWD}"
-conda run --name "${conda_env_name}" $@ 2>&1 | tee experiment_log.log
+cd "$(pwd)"
+conda run -v -v --name "${conda_env_name}" --cwd "$(pwd)" --live-stream $@ 2>&1 | tee experiment_log.log
 exec "${SHELL}"
 EOF
 chmod +x "$experiment_script_file"
