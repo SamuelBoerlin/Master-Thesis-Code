@@ -45,7 +45,8 @@ conda create --name "$conda_env_name" --clone "$EXPERIMENT_CONDA_ENV_BASE"
 
 echo "Running project setup..."
 
-conda run --name "$conda_env_name" "$EXPERIMENT_CONDA_ENV_SETUP_SCRIPT"
+conda_env_setup_script="$(realpath "${EXPERIMENT_CONDA_ENV_SETUP_SCRIPT}")"
+conda run --name "$conda_env_name" --cwd "$(pwd)" "$conda_env_setup_script"
 
 echo "Creating experiment script..."
 
