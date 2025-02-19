@@ -226,6 +226,39 @@ class Pipeline:
 
         pipeline_state.scratch_output_dir = None
 
+        if self.should_run_stage(PipelineStage.TRAIN_FIELD):
+            CONSOLE.log("Training radiance field...")
+
+            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__field_output_dir / "scratch")
+            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
+
+            self.field.init(
+                pipeline_state,
+                transforms_path,
+                self.__io.get_output_path(self.__field_output_dir),
+                **self.kwargs,
+            )
+
+            self.field.train()
+        elif self.should_load_stage(PipelineStage.TRAIN_FIELD):
+            CONSOLE.log("Loading radiance field...")
+
+            def has_checkpoint(path: Path) -> bool:
+                if path.exists():
+                    for _ in path.rglob("nerfstudio_models/step-*.ckpt"):
+                        return True
+                return False
+
+            self.field.init(
+                pipeline_state,
+                transforms_path,
+                self.__io.get_input_path(self.__field_output_dir, condition=has_checkpoint),
+                load_from_checkpoint=True,
+                **self.kwargs,
+            )
+
+        pipeline_state.scratch_output_dir = None
+
         if self.should_run_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Sampling positions...")
 
@@ -270,39 +303,6 @@ class Pipeline:
         elif self.should_load_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Loading positions...")
             self.__load_sample_positions(pipeline_state)
-
-        pipeline_state.scratch_output_dir = None
-
-        if self.should_run_stage(PipelineStage.TRAIN_FIELD):
-            CONSOLE.log("Training radiance field...")
-
-            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__field_output_dir / "scratch")
-            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
-
-            self.field.init(
-                pipeline_state,
-                transforms_path,
-                self.__io.get_output_path(self.__field_output_dir),
-                **self.kwargs,
-            )
-
-            self.field.train()
-        elif self.should_load_stage(PipelineStage.TRAIN_FIELD):
-            CONSOLE.log("Loading radiance field...")
-
-            def has_checkpoint(path: Path) -> bool:
-                if path.exists():
-                    for _ in path.rglob("nerfstudio_models/step-*.ckpt"):
-                        return True
-                return False
-
-            self.field.init(
-                pipeline_state,
-                transforms_path,
-                self.__io.get_input_path(self.__field_output_dir, condition=has_checkpoint),
-                load_from_checkpoint=True,
-                **self.kwargs,
-            )
 
         pipeline_state.scratch_output_dir = None
 
@@ -546,8 +546,8 @@ class Pipeline:
 class PipelineStage(str, Enum):
     SAMPLE_VIEWS = "SAMPLE_VIEWS"
     RENDER_VIEWS = "RENDER_VIEWS"
-    SAMPLE_POSITIONS = "SAMPLE_POSITIONS"
     TRAIN_FIELD = "TRAIN_FIELD"
+    SAMPLE_POSITIONS = "SAMPLE_POSITIONS"
     SAMPLE_EMBEDDINGS = "SAMPLE_EMBEDDINGS"
     CLUSTER_EMBEDDINGS = "CLUSTER_EMBEDDINGS"
     SELECT_VIEWS = "SELECT_VIEWS"
@@ -595,8 +595,8 @@ class PipelineStage(str, Enum):
 PipelineStage.ORDER = {
     PipelineStage.SAMPLE_VIEWS: 1,
     PipelineStage.RENDER_VIEWS: 2,
-    PipelineStage.SAMPLE_POSITIONS: 3,
-    PipelineStage.TRAIN_FIELD: 4,
+    PipelineStage.TRAIN_FIELD: 3,
+    PipelineStage.SAMPLE_POSITIONS: 4,
     PipelineStage.SAMPLE_EMBEDDINGS: 5,
     PipelineStage.CLUSTER_EMBEDDINGS: 6,
     PipelineStage.SELECT_VIEWS: 7,
