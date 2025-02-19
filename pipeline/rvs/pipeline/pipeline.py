@@ -250,6 +250,22 @@ class Pipeline:
                                 pipeline_state.training_views[i], frame_name="sample_positions_{}.png"
                             ),
                         ),
+                        render_as_plot=False,
+                    )
+                    render_sample_positions(
+                        self.config.model_file,
+                        pipeline_state.training_views[i],
+                        pipeline_state.model_normalization,
+                        pipeline_state.sample_positions,
+                        lambda sample_view, image: save_transforms_frame(
+                            self.__io.get_output_path(self.__renderer_output_dir),
+                            sample_view,
+                            image,
+                            frame_name=get_frame_name(
+                                pipeline_state.training_views[i], frame_name="sample_positions_{}_plot.png"
+                            ),
+                        ),
+                        render_as_plot=True,
                     )
         elif self.should_load_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Loading positions...")
@@ -331,6 +347,25 @@ class Pipeline:
                             ),
                         ),
                         hard_assignments=self.config.render_sample_clusters_hard_assignment,
+                        render_as_plot=False,
+                    )
+                    render_sample_clusters(
+                        self.config.model_file,
+                        pipeline_state.training_views[i],
+                        pipeline_state.model_normalization,
+                        pipeline_state.sample_positions,
+                        pipeline_state.sample_embeddings,
+                        pipeline_state.sample_clusters,
+                        lambda sample_view, image: save_transforms_frame(
+                            self.__io.get_output_path(self.__renderer_output_dir),
+                            sample_view,
+                            image,
+                            frame_name=get_frame_name(
+                                pipeline_state.training_views[i], frame_name="sample_clusters_{}_plot.png"
+                            ),
+                        ),
+                        hard_assignments=self.config.render_sample_clusters_hard_assignment,
+                        render_as_plot=True,
                     )
         elif self.should_load_stage(PipelineStage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Loading clusters...")

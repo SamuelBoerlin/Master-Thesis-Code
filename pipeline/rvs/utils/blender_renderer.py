@@ -133,6 +133,7 @@ def normalize_scene_auto() -> Normalization:
     scale = 1.0 / max(bbox_max - bbox_min)
 
     for obj in scene_root_objects():
+        obj.location = obj.location * scale
         obj.scale = obj.scale * scale
 
     # Apply scale to matrix_world.
@@ -155,6 +156,13 @@ def normalize_scene_manual(normalization: Normalization) -> None:
     offset = mathutils.Vector(normalization.offset)
 
     for obj in scene_root_objects():
+        obj.location = mathutils.Vector(
+            (
+                obj.location.x * scale.x,
+                obj.location.y * scale.y,
+                obj.location.z * scale.z,
+            )
+        )
         obj.scale = mathutils.Vector(
             (
                 obj.scale.x * scale.x,

@@ -480,7 +480,7 @@ class BlenderRenderer(Renderer):
     def from_blender_normalization(self, normalization: BlenderNormalization) -> Normalization:
         return Normalization(
             np.array([normalization.scale[0], normalization.scale[2], normalization.scale[1]]),
-            np.array([normalization.offset[0], -normalization.offset[2], normalization.offset[1]]),
+            np.array([normalization.offset[0], normalization.offset[2], -normalization.offset[1]]),
         )
 
     def run_renders(

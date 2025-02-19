@@ -19,8 +19,14 @@ def render_sample_positions(
     normalization: Normalization,
     sample_positions: NDArray,
     callback: Callable[[View, im.Image], None],
+    render_as_plot: bool = True,
 ) -> None:
-    output = RenderOutput(path=None, callback=lambda view, image: render_image_plot(view, image, callback))
+    output = RenderOutput(
+        path=None,
+        callback=lambda view, image: render_image_plot(view, image, callback)
+        if render_as_plot
+        else callback(view, image),
+    )
 
     state = PipelineState(None)
     state.model_normalization = normalization
@@ -44,6 +50,7 @@ def render_sample_clusters(
     sample_clusters: NDArray,
     callback: Callable[[View, im.Image], None],
     hard_assignments: bool = False,
+    render_as_plot: bool = True,
 ) -> None:
     num_clusters = sample_clusters.shape[0]
     num_samples = sample_embeddings.shape[0]
@@ -76,7 +83,9 @@ def render_sample_clusters(
         path=None,
         callback=lambda view, image: render_image_plot(
             view, image, callback, figure_setup=color_legend(colors, labels, "Clusters")
-        ),
+        )
+        if render_as_plot
+        else callback(view, image),
     )
 
     state = PipelineState(None)
