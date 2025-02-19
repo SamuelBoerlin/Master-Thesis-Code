@@ -56,8 +56,11 @@ class SelectUidsInCategories(Command):
     seed: int = 42
     """Seed for random selection"""
 
-    excluded_uids_json_file: Optional[Path] = None
+    excluded_uids_json_file: Optional[List[Path]] = None
     """Path of uids array .json file which should be excluded from selection"""
+
+    included_uids_json_file: Optional[List[Path]] = None
+    """Path of uids array .json file which should be included in selection and any other uids are ignored"""
 
     uids_json_file: Optional[Path] = None
     """Path where to save uids array .json file"""
@@ -67,12 +70,21 @@ class SelectUidsInCategories(Command):
         with self.categories_json_file.open("r") as f:
             categories = sorted(list(json.load(f)))
 
-        excluded_uids = set()
+        excluded_uids = None
         if self.excluded_uids_json_file is not None:
-            with self.excluded_uids_json_file.open("r") as f:
-                excluded_uids = set(json.load(f))
+            excluded_uids = set()
+            for file in self.excluded_uids_json_file:
+                with file.open("r") as f:
+                    excluded_uids = excluded_uids.union(set(json.load(f)))
 
-        lvis = LVISDataset(lvis_categories=set(categories), lvis_uids=None)
+        included_uids = None
+        if self.included_uids_json_file is not None:
+            included_uids = set()
+            for file in self.included_uids_json_file:
+                with file.open("r") as f:
+                    included_uids = included_uids.union(set(json.load(f)))
+
+        lvis = LVISDataset(lvis_categories=set(categories), lvis_uids=included_uids)
 
         dataset = lvis.fetch_lvis_dataset()
 
@@ -83,7 +95,12 @@ class SelectUidsInCategories(Command):
         for category in categories:
             category_uids = sorted(dataset[category])
 
-            filtered_category_uids: List[str] = [uid for uid in category_uids if uid not in excluded_uids]
+            filtered_category_uids: List[str] = [
+                uid
+                for uid in category_uids
+                if (included_uids is None or uid in included_uids)
+                and (excluded_uids is None or uid not in excluded_uids)
+            ]
 
             if len(filtered_category_uids) < self.count:
                 raise ValueError(f"Insufficient number of uids available ({len(filtered_category_uids)})")
