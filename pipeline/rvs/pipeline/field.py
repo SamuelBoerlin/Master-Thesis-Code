@@ -10,6 +10,13 @@ from nerfstudio.models.base_model import ModelConfig
 from numpy.typing import NDArray
 from torch import Tensor
 
+from rvs.pipeline.embedding import (
+    ClipAtScaleEmbeddingConfig,
+    ClipEmbeddingConfig,
+    DefaultEmbeddingTypes,
+    DinoEmbeddingConfig,
+    EmbeddingConfig,
+)
 from rvs.pipeline.model import WrapperModelConfig
 from rvs.pipeline.state import PipelineState
 from rvs.pipeline.training_controller import TrainingController, TrainingControllerConfig
@@ -107,33 +114,73 @@ class Field:
         self.trainer.train()
         self.trainer.shutdown()
 
-    def sample(self, positions: NDArray) -> NDArray:
-        # TODO: Proper typing
-        lerf_model: LERFModel = self.trainer.pipeline.model
+    def sample(self, config: EmbeddingConfig, positions: NDArray) -> NDArray:
+        if config.type == DefaultEmbeddingTypes.CLIP:
+            clip_scale = 1.0
 
+            if isinstance(config, ClipAtScaleEmbeddingConfig):
+                config_with_scale: ClipAtScaleEmbeddingConfig = config
+                clip_scale = config_with_scale.scale
+            elif not isinstance(config, ClipEmbeddingConfig):
+                raise ValueError(f"Unknown CLIP config type {str(config)}")
+
+            # TODO: Proper typing
+            lerf_model: LERFModel = self.trainer.pipeline.model
+
+            # Convert positions np array to tensor
+            positions: Tensor = self.__transform_positions(lerf_model, positions)
+
+            # Sample hashgrid values
+            x = self.__sample_hashgrid_values(lerf_model, positions)
+
+            # Obtain embeddings for the given hashgrid values
+            clip_scales = clip_scale * torch.ones((1, positions.shape[1], 1), device=positions.device)
+            embeddings = lerf_model.lerf_field.clip_net(torch.cat([x, clip_scales.view(-1, 1)], dim=-1))
+
+            # Normalize embeddings
+            embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
+
+            # Convert embeddings tensor to np array
+            embeddings = embeddings.view(-1, embeddings.shape[-1]).float()
+            embeddings: NDArray = embeddings.cpu().data.numpy()
+
+            return embeddings
+        elif config.type == DefaultEmbeddingTypes.DINO:
+            if not isinstance(config, DinoEmbeddingConfig):
+                raise ValueError(f"Unknown DINO config type {str(config)}")
+
+            # TODO: Proper typing
+            lerf_model: LERFModel = self.trainer.pipeline.model
+
+            # Convert positions np array to tensor
+            positions: Tensor = self.__transform_positions(lerf_model, positions)
+
+            # Sample hashgrid values
+            x = self.__sample_hashgrid_values(lerf_model, positions)
+
+            # Obtain embeddings for the given hashgrid values
+            embeddings = lerf_model.lerf_field.dino_net(x)
+
+            # Convert embeddings tensor to np array
+            embeddings = embeddings.view(-1, embeddings.shape[-1]).float()
+            embeddings: NDArray = embeddings.cpu().data.numpy()
+
+            return embeddings
+        else:
+            raise ValueError(f"Unknown embedding config type {str(config)}")
+
+    def __transform_positions(self, lerf_model: LERFModel, positions: NDArray) -> Tensor:
         # Convert positions np array to tensor
         positions: Tensor = torch.from_numpy(positions).to(lerf_model.device).reshape((1, -1, 3))
 
+        # Transform
         positions = lerf_model.lerf_field.spatial_distortion(positions)
         positions = (positions + 2.0) / 4.0
 
+        return positions
+
+    def __sample_hashgrid_values(self, lerf_model: LERFModel, positions: Tensor) -> Tensor:
         # Sample hashgrid values
         xs = [e(positions.view(-1, 3)) for e in lerf_model.lerf_field.clip_encs]
         x = torch.concat(xs, dim=-1)
-
-        # TODO: Simply using 1.0 for the scale at the moment
-        clip_scales = torch.ones((1, positions.shape[1], 1), device=positions.device)
-
-        # Obtain embeddings for the given hashgrid values
-        embeddings = lerf_model.lerf_field.clip_net(torch.cat([x, clip_scales.view(-1, 1)], dim=-1))
-
-        # Normalize embeddings
-        embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
-
-        # Convert embeddings tensor to np array
-        embeddings = embeddings.view(-1, embeddings.shape[-1]).float()
-        embeddings: NDArray = embeddings.cpu().data.numpy()
-
-        return embeddings
-
-    # TODO: Add method for sampling embeddings from field
+        return x

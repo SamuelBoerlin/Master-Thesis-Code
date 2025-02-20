@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, List, NamedTuple, Optional
+from typing import TYPE_CHECKING, Dict, List, NamedTuple, Optional
 
 from numpy.typing import NDArray
 
@@ -20,6 +20,8 @@ class PipelineState:
     model_normalization: Optional[Normalization] = None
     sample_positions: Optional[NDArray] = None
     sample_embeddings: Optional[NDArray] = None
+    sample_embeddings_type: Optional[str] = None
+    sample_embeddings_dict: Optional[Dict[str, NDArray]] = None
     sample_clusters: Optional[NDArray] = None
     selected_views: Optional[List["View"]] = None
 

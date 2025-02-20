@@ -1,16 +1,18 @@
 import dataclasses
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, List, Optional, Set, Type
+from typing import Any, Dict, List, Optional, Set, Tuple, Type
 
 import numpy as np
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.utils.rich_utils import CONSOLE
+from numpy.typing import NDArray
 from PIL import Image as im
 
 from rvs.pipeline.clustering import Clustering, ClusteringConfig
+from rvs.pipeline.embedding import ClipEmbeddingConfig, EmbeddingConfig
 from rvs.pipeline.field import Field, FieldConfig
 from rvs.pipeline.io import PipelineIO
 from rvs.pipeline.renderer import Normalization, Renderer, RendererConfig, RenderOutput
@@ -39,6 +41,9 @@ class PipelineConfig(ExperimentConfig):
 
     renderer: RendererConfig = dataclasses.field(default_factory=lambda: RendererConfig)
     """Configuration for training views renderer."""
+
+    embeddings: Tuple[EmbeddingConfig, ...] = dataclasses.field(default_factory=lambda: (ClipEmbeddingConfig(),))
+    """Configurations for embeddings to be used."""
 
     field: FieldConfig = dataclasses.field(default_factory=lambda: FieldConfig)
     """Configuration for radiance field."""
@@ -75,6 +80,16 @@ class PipelineConfig(ExperimentConfig):
 
     def setup(self, **kwargs) -> Any:
         self.propagate_experiment_settings()
+
+        if len(self.embeddings) == 0:
+            raise ValueError("At least 1 embeddings config required")
+
+        embeddings_types = set()
+        for embedding_config in self.embeddings:
+            if embedding_config.type in embeddings_types:
+                raise ValueError(f"Duplicate embeddings type {embedding_config.type}")
+            embeddings_types.add(embedding_config.type)
+
         return super().setup(**kwargs)
 
     def propagate_experiment_settings(self):
@@ -131,7 +146,7 @@ class Pipeline:
         return self.config.get_base_dir()
 
     def __init__(self, config: PipelineConfig, **kwargs) -> None:
-        self.config = config
+        self.config = replace(config)
         self.kwargs = kwargs
 
     def init(self, input_dirs: Optional[List[Path]] = None) -> None:
@@ -312,7 +327,25 @@ class Pipeline:
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__embedding_output_dir / "scratch")
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
-            pipeline_state.sample_embeddings = self.field.sample(pipeline_state.sample_positions)
+            pipeline_state.sample_embeddings = None
+            pipeline_state.sample_embeddings_type = None
+            pipeline_state.sample_embeddings_dict = dict()
+
+            for i, embedding_config in enumerate(self.config.embeddings):
+                embeddings = self.field.sample(embedding_config, pipeline_state.sample_positions)
+
+                if i == 0:
+                    pipeline_state.sample_embeddings = embeddings
+                    pipeline_state.sample_embeddings_type = embedding_config.type
+
+                assert embedding_config.type not in pipeline_state.sample_embeddings_dict.keys()
+
+                pipeline_state.sample_embeddings_dict[embedding_config.type] = embeddings
+
+            assert pipeline_state.sample_embeddings is not None
+            assert pipeline_state.sample_embeddings_type is not None
+            assert len(pipeline_state.sample_embeddings_dict) > 0
+
             self.__save_sample_embeddings(pipeline_state)
         elif self.should_load_stage(PipelineStage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Loading embeddings...")
@@ -511,14 +544,27 @@ class Pipeline:
     def __save_sample_embeddings(self, state: "PipelineState") -> Path:
         path = self.__io.get_output_path(self.__embedding_output_dir / "embeddings.json")
         with path.open("w") as f:
-            json.dump(state.sample_embeddings.tolist(), f)
+            embeddings_list_dict = {
+                type: embeddings.tolist() for type, embeddings in state.sample_embeddings_dict.items()
+            }
+            obj = {
+                "type": state.sample_embeddings_type,
+                "dict": embeddings_list_dict,
+            }
+            json.dump(obj, f)
         CONSOLE.log(f"Saved embeddings to {file_link(path)}")
 
     def __load_sample_embeddings(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__embedding_output_dir / "embeddings.json")
         try:
             with path.open("r") as f:
-                state.sample_embeddings = np.array(json.load(f))
+                obj = json.load(f)
+                embeddings_list_dict: Dict[str, NDArray] = obj["dict"]
+                state.sample_embeddings_dict = {
+                    type: np.array(embeddings) for type, embeddings in embeddings_list_dict.items()
+                }
+                state.sample_embeddings_type = obj["type"]
+                state.sample_embeddings = state.sample_embeddings_dict[state.sample_embeddings_type]
             CONSOLE.log(f"Loaded embeddings from {file_link(path)}")
             return path
         except Exception as ex:
