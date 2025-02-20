@@ -83,7 +83,7 @@ class KMeansClustering(Clustering):
         centroids, distortion = kmeans(
             samples,
             num_clusters,
-            seed,
+            seed=seed,
         )
 
         if whitening and std_dev is not None:
