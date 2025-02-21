@@ -1,4 +1,5 @@
 import gc
+import hashlib
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,7 @@ from rvs.evaluation.index import save_index
 from rvs.pipeline.io import PipelineIO
 from rvs.pipeline.pipeline import Pipeline, PipelineConfig, PipelineStage
 from rvs.scripts.rvs import _set_random_seed
+from rvs.utils.hash import hash_file_sha1
 from rvs.utils.nerfstudio import create_transforms_json, get_frame_name
 
 INDEX_FILE_NAME = "index.json"
@@ -184,9 +186,12 @@ class PipelineEvaluationInstance:
         output_dir: Path,
         file: Path,
         stages: Optional[List[PipelineStage]],
+        derived_seed: bool = True,
     ) -> PipelineConfig:
         config = replace(config)
-        config = PipelineEvaluationInstance.__configure_pipeline_run_settings(config, output_dir, file, stages)
+        config = PipelineEvaluationInstance.__configure_pipeline_run_settings(
+            config, output_dir, file, stages, derived_seed
+        )
 
         config.set_timestamp()
 
@@ -201,10 +206,11 @@ class PipelineEvaluationInstance:
         input_dirs: Optional[List[Path]],
         file: Path,
         stages: Optional[List[PipelineStage]],
+        derived_seed: bool = True,
     ) -> Pipeline:
-        pipeline: Pipeline = PipelineEvaluationInstance.configure_pipeline(config, output_dir, file, stages).setup(
-            local_rank=0, world_size=1
-        )
+        pipeline: Pipeline = PipelineEvaluationInstance.configure_pipeline(
+            config, output_dir, file, stages, derived_seed=derived_seed
+        ).setup(local_rank=0, world_size=1)
 
         pipeline.init(input_dirs=input_dirs)
 
@@ -215,9 +221,26 @@ class PipelineEvaluationInstance:
 
     @staticmethod
     def __configure_pipeline_run_settings(
-        config: PipelineConfig, output_dir: Path, file: Path, stages: Optional[List[PipelineStage]]
+        config: PipelineConfig,
+        output_dir: Path,
+        file: Path,
+        stages: Optional[List[PipelineStage]],
+        derived_seed: bool,
     ) -> PipelineConfig:
         config.output_dir = output_dir / file.name
         config.model_file = file
         config.stages = None if stages is None else list(stages)
+
+        if derived_seed and file.exists() and file.is_file():
+            digest = hashlib.sha1(str(config.machine.seed).encode())
+            digest.update(hash_file_sha1(file).encode())
+
+            new_seed = int(digest.hexdigest(), 16)
+            if new_seed < 0:
+                new_seed = -new_seed
+            new_seed %= 2**32 - 1
+
+            machine = replace(config.machine, seed=new_seed)
+            config = replace(config, machine=machine)
+
         return config
