@@ -6,6 +6,8 @@ import numpy as np
 from git import List, Optional
 from matplotlib import pyplot as plt
 from nerfstudio.configs.base_config import InstantiateConfig
+from pyclustering.cluster.center_initializer import kmeans_plusplus_initializer
+from pyclustering.cluster.xmeans import splitting_type, xmeans
 from scipy.cluster.vq import kmeans
 from trimesh.typed import NDArray
 
@@ -336,3 +338,33 @@ class ClosestElbowKMeansClustering(ElbowKMeansClustering):
         distances = np.linalg.norm(points, axis=1)
 
         return ds[np.argmin(distances)]
+
+
+@dataclass
+class XMeansClusteringConfig(RangedKClusteringConfig):
+    _target: Type = field(default_factory=lambda: XMeansClustering)
+
+    kmeans_iterations: int = 10
+    """Number of K-Means iterations in each Improve-Params step"""
+
+
+class XMeansClustering(Clustering):
+    config: XMeansClusteringConfig
+
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> NDArray:
+        initial_centers = kmeans_plusplus_initializer(samples, self.config.min_clusters).initialize()
+
+        xmeans_instance = xmeans(
+            samples.tolist(),
+            initial_centers,
+            kmax=self.config.max_clusters,
+            repeat=self.config.kmeans_iterations,
+            criterion=splitting_type.BAYESIAN_INFORMATION_CRITERION,
+            random_state=pipeline_state.pipeline.config.machine.seed,
+        )
+
+        xmeans_instance.process()
+
+        centroids = np.array(xmeans_instance.get_centers())
+
+        return centroids

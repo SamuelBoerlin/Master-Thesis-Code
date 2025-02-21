@@ -302,10 +302,10 @@ def cluster_colors(num_clusters: int) -> List[Any]:
         ][:num_clusters]
     elif num_clusters <= 10:
         cmap = get_cmap("tab10")
-        return [cmap(i) for i in range(num_clusters)]
+        return [np.array(cmap(i)[:3]) for i in range(num_clusters)]
     else:
         cmap = get_cmap("gist_rainbow", num_clusters)
-        return [cmap(i) for i in range(num_clusters)]
+        return [np.array(cmap(i)[:3]) for i in range(num_clusters)]
 
 
 def elbow_plot(

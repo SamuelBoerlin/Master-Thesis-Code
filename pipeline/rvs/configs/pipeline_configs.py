@@ -15,6 +15,7 @@ from rvs.pipeline.clustering import (
     ClosestElbowKMeansClusteringConfig,
     FractionalElbowKMeansClusteringConfig,
     KMeansClusteringConfig,
+    XMeansClusteringConfig,
 )
 from rvs.pipeline.embedding import ClipAtScaleEmbeddingConfig, DinoEmbeddingConfig
 from rvs.pipeline.pipeline import FieldConfig, PipelineConfig, PipelineStage
@@ -98,6 +99,7 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
             "Variable-k KMeans clustering with elbow method where k is selected by the closest point to the origin",
             ClosestElbowKMeansClusteringConfig(),
         ),
+        "xmeans_bic_clustering": ("X-Means clustering using Bayesian Information Criterion", XMeansClusteringConfig()),
     },
     PipelineStage.SELECT_VIEWS: {
         "best_training_selection": (

@@ -9,7 +9,8 @@ dependencies=[
     "pyglet<2",
     "objaverse @ file:///home/ubuntu/repo/objaverse-dl",
     "gitpython",
-    "fake-bpy-module"
+    "fake-bpy-module",
+    "pyclustering",
 ]
 
 [tool.setuptools.packages.find]
