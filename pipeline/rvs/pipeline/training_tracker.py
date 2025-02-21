@@ -4,23 +4,26 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import torch
-from nerfstudio.configs.base_config import LocalWriterConfig
+from matplotlib import pyplot as plt
+from nerfstudio.configs.base_config import LocalWriterConfig, PrintableConfig
 from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.utils.writer import EVENT_STORAGE, EventType, LocalWriter
-from torch import Tensor
 
 from rvs.utils.console import file_link
+from rvs.utils.plot import save_figure
 
 
 @dataclass
-class TrainingTrackerConfig:
+class TrainingTrackerConfig(PrintableConfig):
     output_dir: Optional[Path] = None
+    """Directory where the outputs are written to."""
 
     tracked_scalars: Dict[str, str] = field(
         default_factory=lambda: {
             "Train Loss": "train_loss",
         }
     )
+    """Which Nerfstudio SCALAR events to save. Mapping of event_name -> output_name."""
 
     tracked_dicts: Dict[str, Dict[str, str]] = field(
         default_factory=lambda: {
@@ -36,6 +39,10 @@ class TrainingTrackerConfig:
             },
         }
     )
+    """Which Nerfstudio DICT events to save. Mapping of event_name -> key -> output_name."""
+
+    render_plots: bool = False
+    """Whether a plot should be rendered for each tracked metric."""
 
 
 @dataclass
@@ -54,6 +61,8 @@ class LocalWriterShimConfig(LocalWriterConfig):
 
 
 class TrainingTracker(LocalWriter):
+    config: TrainingTrackerConfig
+
     __parent_writer: Optional[LocalWriter]
 
     __tracked_scalars: Dict[str, str]
@@ -69,6 +78,7 @@ class TrainingTracker(LocalWriter):
         parent_writer: Optional[LocalWriter] = None,
         **kwargs,
     ) -> None:
+        self.config = config
         self.__parent_writer = parent_writer
         self.__tracked_scalars = config.tracked_scalars
         self.__tracked_dicts = config.tracked_dicts
@@ -148,16 +158,33 @@ class TrainingTracker(LocalWriter):
     def _save_outputs(self) -> None:
         if self.__output_dir.exists() and self.__output_dir.is_dir():
             for output_name, output_values in self.__outputs.items():
-                output_file = self.__output_dir / (output_name + ".json")
+                output_json_file = self.__output_dir / (output_name + ".json")
 
                 outputs = []
                 for step, value in output_values:
                     outputs.append({"step": step, "value": value})
 
                 try:
-                    with output_file.open("w") as f:
+                    with output_json_file.open("w") as f:
                         json.dump(outputs, f)
                 except Exception as e:
                     CONSOLE.log(
-                        f"[bold red]ERROR: Failed saving training tracking output {output_name} to {file_link(output_file)}:\n{str(e)}"
+                        f"[bold red]ERROR: Failed saving training tracking output {output_name} to {file_link(output_json_file)}:\n{str(e)}"
                     )
+
+                if self.config.render_plots:
+                    output_plot_file = self.__output_dir / (output_name + ".png")
+
+                    try:
+                        fig, ax = plt.subplots()
+
+                        ax.plot([step for step, value in output_values], [value for step, value in output_values])
+
+                        ax.set_xlabel("Training Steps")
+                        ax.set_ylabel(output_name)
+
+                        save_figure(fig, output_plot_file)
+                    except Exception as e:
+                        CONSOLE.log(
+                            f"[bold red]ERROR: Failed saving training tracking output {output_name} plot to {file_link(output_plot_file)}:\n{str(e)}"
+                        )

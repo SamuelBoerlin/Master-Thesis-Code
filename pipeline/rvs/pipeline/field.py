@@ -34,7 +34,7 @@ class FieldConfig(InstantiateConfig):
     controller: TrainingControllerConfig = field(default_factory=TrainingControllerConfig)
     """Configuration of the NERF training controller that handles e.g. multiple training phases like rgb -> embeddings"""
 
-    tracking: Optional[TrainingTrackerConfig] = field(default_factory=TrainingTrackerConfig)
+    tracking: TrainingTrackerConfig = field(default_factory=TrainingTrackerConfig)
     """Configuration for NERF training tracking, i.e. saving training progress, losses, etc."""
 
 
