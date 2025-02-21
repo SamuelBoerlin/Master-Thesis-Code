@@ -20,6 +20,7 @@ from rvs.pipeline.embedding import (
 from rvs.pipeline.model import WrapperModelConfig
 from rvs.pipeline.state import PipelineState
 from rvs.pipeline.training_controller import TrainingController, TrainingControllerConfig
+from rvs.pipeline.training_tracker import LocalWriterShimConfig, TrainingTrackerConfig
 
 
 @dataclass
@@ -32,6 +33,9 @@ class FieldConfig(InstantiateConfig):
 
     controller: TrainingControllerConfig = field(default_factory=TrainingControllerConfig)
     """Configuration of the NERF training controller that handles e.g. multiple training phases like rgb -> embeddings"""
+
+    tracking: Optional[TrainingTrackerConfig] = field(default_factory=TrainingTrackerConfig)
+    """Configuration for NERF training tracking, i.e. saving training progress, losses, etc."""
 
 
 class Field:
@@ -59,6 +63,14 @@ class Field:
             cache_dir = Path.joinpath(output_dir, "cache", pipeline_state.pipeline.config.model_file.name)
             cache_dir.mkdir(parents=True, exist_ok=True)
             config = self.__replace_cache_dir(config, cache_dir)
+
+            scratch_dir = Path.joinpath(output_dir, "scratch")
+            scratch_dir.mkdir(parents=True, exist_ok=True)
+
+            tracking_dir = scratch_dir / "tracking"
+            tracking_dir.mkdir(parents=True, exist_ok=True)
+
+            config = self.__configure_tracking(config, tracking_dir)
 
             output_dir = Path.joinpath(output_dir, "nerf")
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -108,6 +120,26 @@ class Field:
         pipeline = replace(config.trainer.pipeline, datamanager=datamanager)
         trainer = replace(config.trainer, pipeline=pipeline)
         config = replace(config, trainer=trainer)
+        return config
+
+    def __configure_tracking(self, config: FieldConfig, tracking_dir: Path) -> FieldConfig:
+        if config.tracking is not None:
+            tracker = config.tracking
+            if tracker.output_dir is None:
+                tracker = replace(tracker, output_dir=tracking_dir)
+
+            config = replace(config, tracking=tracker)
+
+            logging = replace(
+                config.trainer.logging,
+                local_writer=LocalWriterShimConfig(
+                    enable=True,
+                    parent=config.trainer.logging.local_writer,
+                    config=tracker,
+                ),
+            )
+            trainer = replace(config.trainer, logging=logging)
+            config = replace(config, trainer=trainer)
         return config
 
     def train(self) -> None:
