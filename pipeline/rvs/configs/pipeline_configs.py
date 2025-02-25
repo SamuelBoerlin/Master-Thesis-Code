@@ -20,7 +20,11 @@ from rvs.pipeline.clustering import (
 from rvs.pipeline.embedding import ClipAtScaleEmbeddingConfig, DinoEmbeddingConfig
 from rvs.pipeline.pipeline import FieldConfig, PipelineConfig, PipelineStage
 from rvs.pipeline.renderer import BlenderRendererConfig, PyrenderRendererConfig, TrimeshRendererConfig
-from rvs.pipeline.sampler import TrimeshPositionSamplerConfig
+from rvs.pipeline.sampler import (
+    BinarySearchDensityTrimeshPositonSamplerConfig,
+    FarthestPointSamplingDensityTrimeshPositonSamplerConfig,
+    MinDistanceTrimeshPositionSamplerConfig,
+)
 from rvs.pipeline.selection import BestTrainingViewSelectionConfig
 from rvs.pipeline.views import FermatSpiralViewsConfig, SphereViewsConfig
 from rvs.utils.dataclasses import extend_dataclass_obj
@@ -87,7 +91,18 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
         "lerf_big_field": ("LERF big method", FieldConfig(trainer=adapt_lerf_config(lerf_method_big.config))),
     },
     PipelineStage.SAMPLE_POSITIONS: {
-        "trimesh_sampler": ("Random face area weighted position sampler with Trimesh", TrimeshPositionSamplerConfig()),
+        "min_distance_sampler": (
+            "Uniform geometry-based position sampler where samples are decimated until a minimum distance is reached",
+            MinDistanceTrimeshPositionSamplerConfig(),
+        ),
+        "binary_search_density_sampler": (
+            "Uniform geometry-based position sampler that attempts to sample with a given density per surface area by performing a binary search over minimum distance of min_distance_sampler",
+            BinarySearchDensityTrimeshPositonSamplerConfig(),
+        ),
+        "fps_density_sampler": (
+            "Uniform geometry-based position sampler that samples with a given density per surface area using Farthest Point Sampling",
+            FarthestPointSamplingDensityTrimeshPositonSamplerConfig(),
+        ),
     },
     PipelineStage.CLUSTER_EMBEDDINGS: {
         "kmeans_clustering": ("Fixed-k KMeans clustering", KMeansClusteringConfig()),

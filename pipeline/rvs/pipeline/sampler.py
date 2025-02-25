@@ -1,6 +1,8 @@
+import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Type
+from typing import List, Tuple, Type
 
 import numpy as np
 import trimesh
@@ -17,12 +19,6 @@ from rvs.utils.trimesh import normalize_scene_manual
 class PositionSamplerConfig(InstantiateConfig):
     _target: Type = field(default_factory=lambda: PositionSampler)
 
-    num_samples: int = 10000
-    """Desired number of samples"""
-
-    min_distance: float = 0.025
-    """Minimum distance between samples"""
-
 
 class PositionSampler:
     config: PositionSamplerConfig
@@ -34,12 +30,7 @@ class PositionSampler:
         pass
 
 
-@dataclass
-class TrimeshPositionSamplerConfig(PositionSamplerConfig):
-    _target: Type = field(default_factory=lambda: TrimeshPositionSampler)
-
-
-class TrimeshPositionSampler(PositionSampler):
+class BaseTrimeshPositionSampler(PositionSampler):
     def sample(self, file: Path, pipeline_state: PipelineState) -> NDArray:
         if pipeline_state.model_normalization is None:
             raise Exception("Model normalization required")
@@ -53,12 +44,7 @@ class TrimeshPositionSampler(PositionSampler):
 
         scene = normalize_scene_manual(scene, pipeline_state.model_normalization)
 
-        # NB: This must happen after normalize_scene, otherwise the scales
-        # may end up different than what was used to render the views
-        # FIXME: Seems not needed after all..
-        # self.__apply_coordinate_system_transform(scene)
-
-        tris = scene.triangles
+        tris: NDArray = scene.triangles
 
         num_triangles = tris.shape[0]
 
@@ -70,80 +56,89 @@ class TrimeshPositionSampler(PositionSampler):
             faces[i][1] = i * 3 + 1
             faces[i][2] = i * 3 + 2
 
-        # Use triangle area as weight
-        areas = triangles.area(crosses=triangles.cross(tris))
+        face_weight = self._sample_face_weight(tris, vertices, faces)
 
-        positions, _ = self.__sample_surface_even(
+        positions = self._sample(
+            file,
+            pipeline_state,
+            tris,
             vertices,
             faces,
-            self.config.num_samples,
-            face_weight=areas,
-            radius=self.config.min_distance,
+            face_weight=face_weight,
             seed=pipeline_state.pipeline.config.machine.seed,
         )
 
         return positions
 
-    def __apply_coordinate_system_transform(self, scene: Scene) -> None:
-        """Brings the trimesh coordinates system in line with the other coordinate systems"""
+    def _sample_face_weight(self, tris: NDArray, vertices: NDArray, faces: NDArray) -> NDArray:
+        # Use triangle surface area as weight for uniform distribution
+        return self._surface_area(tris)
 
-        angle_z = 0.0
-        rot_z = np.array(
-            [
-                [np.cos(angle_z), -np.sin(angle_z), 0, 0],
-                [np.sin(angle_z), np.cos(angle_z), 0, 0],
-                [0, 0, 1, 0],
-                [0, 0, 0, 1],
-            ]
-        )
+    def _sample(
+        self,
+        file: Path,
+        pipeline_state: PipelineState,
+        tris: NDArray,
+        vertices: NDArray,
+        faces: NDArray,
+        face_weight: Optional[NDArray] = None,
+        seed=None,
+    ) -> NDArray:
+        pass
 
-        angle_y = 0.0
-        rot_y = np.array(
-            [
-                [np.cos(angle_y), 0, np.sin(angle_y), 0],
-                [0, 1, 0, 0],
-                [-np.sin(angle_y), 0, np.cos(angle_y), 0],
-                [0, 0, 0, 1],
-            ]
-        )
-
-        angle_x = np.pi * 0.5
-        rot_x = np.array(
-            [
-                [1, 0, 0, 0],
-                [0, np.cos(angle_x), -np.sin(angle_x), 0],
-                [0, np.sin(angle_x), np.cos(angle_x), 0],
-                [0, 0, 0, 1],
-            ]
-        )
-
-        transform = np.eye(4)
-        transform = np.dot(transform, rot_z)
-        transform = np.dot(transform, rot_y)
-        transform = np.dot(transform, rot_x)
-
-        scene.apply_transform(transform)
+    def _surface_area(self, tris: NDArray) -> NDArray:
+        return triangles.area(crosses=triangles.cross(tris))
 
     # Adapted from trimesh to work with arbitrary vertices/faces instead of mesh
-    def __sample_surface(
+    def _sample_surface_even(
+        self,
+        vertices: NDArray,
+        faces: NDArray,
+        count: Integer,
+        face_weight: Optional[NDArray] = None,
+        radius: Optional[Number] = None,
+        seed=None,
+    ) -> Tuple[NDArray, NDArray[np.intp]]:
+        from trimesh.points import remove_close
+
+        points, index = self._sample_surface(
+            vertices,
+            faces,
+            count * 3,
+            face_weight=face_weight,
+            seed=seed,
+        )
+
+        if radius is None:
+            return points, index
+
+        points, mask = remove_close(points, radius)
+
+        if len(points) >= count:
+            return points[:count], index[mask][:count]
+
+        return points, index[mask]
+
+    # Adapted from trimesh to work with arbitrary vertices/faces instead of mesh
+    def _sample_surface(
         self,
         vertices: NDArray,
         faces: NDArray,
         count: Integer,
         face_weight: Optional[NDArray] = None,
         seed=None,
-    ) -> NDArray:
+    ) -> Tuple[NDArray, NDArray[np.intp]]:
         if face_weight is None:
             face_weight = np.ones((faces.shape[0]))
 
         weight_cum = np.cumsum(face_weight)
 
         if seed is None:
-            random = np.random.random
+            rng = np.random.random
         else:
-            random = np.random.default_rng(seed).random
+            rng = np.random.default_rng(seed).random
 
-        face_pick = random(count) * weight_cum[-1]
+        face_pick = rng(count) * weight_cum[-1]
         face_index = np.searchsorted(weight_cum, face_pick)
 
         tri_origins = vertices[faces[:, 0]]
@@ -153,7 +148,7 @@ class TrimeshPositionSampler(PositionSampler):
         tri_origins = tri_origins[face_index]
         tri_vectors = tri_vectors[face_index]
 
-        random_lengths = random((len(tri_vectors), 2, 1))
+        random_lengths = rng((len(tri_vectors), 2, 1))
 
         random_test = random_lengths.sum(axis=1).reshape(-1) > 1.0
         random_lengths[random_test] -= 1.0
@@ -165,29 +160,215 @@ class TrimeshPositionSampler(PositionSampler):
 
         return samples, face_index
 
-    # Adapted from trimesh to work with arbitrary vertices/faces instead of mesh
-    def __sample_surface_even(
+
+@dataclass
+class MinDistanceTrimeshPositionSamplerConfig(PositionSamplerConfig):
+    _target: Type = field(default_factory=lambda: MinDistanceTrimeshPositionSampler)
+
+    num_samples: int = 10000
+    """Number of samples before decimation"""
+
+    min_distance: float = 0.025
+    """Minimum distance between samples"""
+
+
+@dataclass
+class TrimeshPositionSamplerConfig(MinDistanceTrimeshPositionSamplerConfig):
+    """Deprecated, only for backwards compatibility"""
+
+    pass
+
+
+class MinDistanceTrimeshPositionSampler(BaseTrimeshPositionSampler):
+    config: MinDistanceTrimeshPositionSamplerConfig
+
+    def _sample(
         self,
+        file: Path,
+        pipeline_state: PipelineState,
+        tris: NDArray,
         vertices: NDArray,
         faces: NDArray,
-        count: Integer,
         face_weight: Optional[NDArray] = None,
-        radius: Optional[Number] = None,
         seed=None,
     ) -> NDArray:
-        from trimesh.points import remove_close
-
-        points, index = self.__sample_surface(
+        positions, _ = self._sample_surface_even(
             vertices,
             faces,
-            count * 3,
+            self.config.num_samples,
             face_weight=face_weight,
+            radius=self.config.min_distance,
+            seed=seed,
+        )
+        return positions
+
+
+class TrimeshPositionSampler(MinDistanceTrimeshPositionSampler):
+    """Deprecated, only for backwards compatibility"""
+
+    pass
+
+
+@dataclass
+class BinarySearchDensityTrimeshPositonSamplerConfig(PositionSamplerConfig):
+    _target: Type = field(default_factory=lambda: BinarySearchDensityTrimeshPositionSampler)
+
+    num_samples: int = 10000
+    """Number of samples before decimation"""
+
+    samples_per_unit_area: float = 500
+    """Desired number of samples per unit area (after normalization), i.e. density"""
+
+    num_iterations: int = 32
+    """Number of binary search iterations"""
+
+    lowest_min_distance: float = 0.0
+    """Lowest minimum distance between samples"""
+
+    highest_min_distance: float = 0.5
+    """Highest minimum distance between samples"""
+
+
+class BinarySearchDensityTrimeshPositionSampler(BaseTrimeshPositionSampler):
+    config: BinarySearchDensityTrimeshPositonSamplerConfig
+
+    def _sample(
+        self,
+        file: Path,
+        pipeline_state: PipelineState,
+        tris: NDArray,
+        vertices: NDArray,
+        faces: NDArray,
+        face_weight: Optional[NDArray] = None,
+        seed=None,
+    ) -> NDArray:
+        surface_area = np.sum(self._surface_area(tris))
+
+        target_num_samples = min(
+            int(math.ceil(self.config.samples_per_unit_area * surface_area)), self.config.num_samples
+        )
+
+        if target_num_samples <= 0:
+            return np.zeros((0, 3))
+
+        lo_min_distance = self.config.lowest_min_distance
+        hi_min_distance = self.config.highest_min_distance
+        mid_min_distance = (lo_min_distance + hi_min_distance) * 0.5
+
+        positions: NDArray = None
+
+        iterations: List[Tuple[float, float, float, int]] = []
+
+        for i in range(self.config.num_iterations):
+            positions, _ = self._sample_surface_even(
+                vertices,
+                faces,
+                self.config.num_samples,
+                face_weight=face_weight,
+                radius=mid_min_distance,
+                seed=seed,
+            )
+
+            iterations.append((lo_min_distance, mid_min_distance, hi_min_distance, len(positions)))
+
+            if len(positions) > target_num_samples:
+                lo_min_distance = mid_min_distance
+                mid_min_distance = (lo_min_distance + hi_min_distance) * 0.5
+            elif len(positions) < target_num_samples:
+                hi_min_distance = mid_min_distance
+                mid_min_distance = (lo_min_distance + hi_min_distance) * 0.5
+            else:
+                break
+
+        assert positions is not None
+
+        if pipeline_state.scratch_output_dir is not None:
+            json_file = pipeline_state.scratch_output_dir / "min_distance_binary_search.json"
+
+            json_obj = [
+                {
+                    "lo": iteration[0],
+                    "mid": iteration[1],
+                    "hi": iteration[2],
+                    "samples": iteration[3],
+                }
+                for iteration in iterations
+            ]
+
+            with json_file.open("w") as f:
+                json.dump(json_obj, f)
+
+        return positions
+
+
+@dataclass
+class FarthestPointSamplingDensityTrimeshPositonSamplerConfig(PositionSamplerConfig):
+    _target: Type = field(default_factory=lambda: FarthestPointSamplingDensityTrimeshPositionSampler)
+
+    num_samples: int = 10000
+    """Number of samples before decimation"""
+
+    samples_per_unit_area: float = 500
+    """Desired number of samples per unit area (after normalization), i.e. density"""
+
+
+# Y. Eldar, M. Lindenbaum, M. Porat and Y. Y. Zeevi (1997), The farthest point strategy for progressive image sampling. https://doi.org/10.1109/83.623193
+# Charles R. Qi and Li Yi and Hao Su and Leonidas J. Guibas (2017), PointNet++: Deep Hierarchical Feature Learning on Point Sets in a Metric Space. https://doi.org/10.48550/arXiv.1706.02413
+class FarthestPointSamplingDensityTrimeshPositionSampler(BaseTrimeshPositionSampler):
+    config: FarthestPointSamplingDensityTrimeshPositonSamplerConfig
+
+    def _sample(
+        self,
+        file: Path,
+        pipeline_state: PipelineState,
+        tris: NDArray,
+        vertices: NDArray,
+        faces: NDArray,
+        face_weight: Optional[NDArray] = None,
+        seed=None,
+    ) -> NDArray:
+        surface_area = np.sum(self._surface_area(tris))
+
+        target_num_samples = min(
+            int(math.ceil(self.config.samples_per_unit_area * surface_area)), self.config.num_samples
+        )
+
+        if target_num_samples <= 0:
+            return np.zeros((0, 3))
+
+        positions, _ = self._sample_surface_even(
+            vertices,
+            faces,
+            self.config.num_samples,
+            face_weight=face_weight,
+            radius=None,
             seed=seed,
         )
 
-        points, mask = remove_close(points, radius)
+        if positions.shape[0] == 0 or target_num_samples >= self.config.num_samples:
+            return positions
 
-        if len(points) >= count:
-            return points[:count], index[mask][:count]
+        start_pos_idx = np.random.default_rng(seed).integers(0, positions.shape[0])
+        start_pos = positions[start_pos_idx]
 
-        return points, index[mask]
+        decimated_positions = [start_pos]
+
+        def dst(xs: NDArray, x: NDArray):
+            return np.sqrt(np.sum((xs - x) ** 2, axis=1))
+
+        min_distances = dst(positions, start_pos)
+
+        for _ in range(target_num_samples - 1):
+            farthest_pos_idx = np.argmax(min_distances)
+
+            assert min_distances[farthest_pos_idx] >= 0
+
+            farthest_pos = positions[farthest_pos_idx]
+
+            decimated_positions.append(farthest_pos)
+
+            min_distances = np.minimum(min_distances, dst(positions, farthest_pos))
+
+            min_distances[farthest_pos_idx] = -1
+
+        return np.array(decimated_positions)
