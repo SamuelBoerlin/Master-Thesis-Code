@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from nerfstudio.configs.base_config import InstantiateConfig
 from pyclustering.cluster.center_initializer import kmeans_plusplus_initializer
 from pyclustering.cluster.xmeans import splitting_type, xmeans
-from scipy.cluster.vq import kmeans
+from scipy.cluster.vq import kmeans, vq
 from trimesh.typed import NDArray
 
 from rvs.pipeline.state import PipelineState
@@ -27,7 +27,7 @@ class Clustering:
     def __init__(self, config: ClusteringConfig):
         self.config = config
 
-    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> NDArray:
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[NDArray, NDArray[np.intp]]:
         pass
 
 
@@ -60,20 +60,20 @@ class KMeansClusteringConfig(FixedKClusteringConfig):
 class KMeansClustering(Clustering):
     config: KMeansClusteringConfig
 
-    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> NDArray:
-        centroids, _ = KMeansClustering.kmeans_clustering(
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[NDArray, NDArray[np.intp]]:
+        centroids, indices, _ = KMeansClustering.kmeans_clustering(
             samples,
             self.config.num_clusters,
             self.config.whitening,
             pipeline_state.pipeline.config.machine.seed,
             True,
         )
-        return centroids
+        return centroids, indices
 
     @staticmethod
     def kmeans_clustering(
         samples: NDArray, num_clusters: int, whitening: bool, seed: int, normalize_centroids: bool
-    ) -> Tuple[NDArray, float]:
+    ) -> Tuple[NDArray, NDArray[np.intp], float]:
         std_dev: NDArray = None
 
         if whitening:
@@ -88,6 +88,8 @@ class KMeansClustering(Clustering):
             seed=seed,
         )
 
+        indices, _ = vq(samples, centroids)
+
         if whitening and std_dev is not None:
             # Undo "whitening"
             centroids *= std_dev
@@ -95,7 +97,7 @@ class KMeansClustering(Clustering):
         if normalize_centroids:
             centroids = centroids / np.linalg.norm(centroids, axis=1, keepdims=True)
 
-        return (centroids, distortion)
+        return (centroids, indices, distortion)
 
 
 @dataclass
@@ -126,13 +128,15 @@ class ElbowKMeansClustering(Clustering):
         else:
             self._num_clusters = list(range(self.config.min_clusters, self.config.max_clusters + 1))
 
-    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> NDArray:
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[NDArray, NDArray[np.intp]]:
         centroids: List[List[NDArray]] = []
+        indices: List[List[NDArray[np.intp]]]
         distortions: List[List[float]] = []
 
         for k in self._num_clusters:
-            k_centroids, k_distortions = self.__cluster(samples, pipeline_state, k, self.config.trials_per_k)
+            k_centroids, k_indices, k_distortions = self.__cluster(samples, pipeline_state, k, self.config.trials_per_k)
             centroids.append(k_centroids)
+            indices.append(k_indices)
             distortions.append(k_distortions)
 
         avg_distortions = [np.mean(np.array(k_distortions)) for k_distortions in distortions]
@@ -154,14 +158,16 @@ class ElbowKMeansClustering(Clustering):
         pred_k = int(round(pred_frac_k))
 
         pred_k_centroids: List[NDArray] = None
+        pred_k_indices: List[NDArray[np.intp]] = None
         pred_k_distortions: List[float] = None
 
         try:
             pred_k_i = self._num_clusters.index(pred_k)
             pred_k_centroids = centroids[pred_k_i]
+            pred_k_indices = indices[pred_k_i]
             pred_k_distortions = distortions[pred_k_i]
         except ValueError:
-            pred_k_centroids, pred_k_distortions = self.__cluster(
+            pred_k_centroids, pred_k_indices, pred_k_distortions = self.__cluster(
                 samples, pipeline_state, pred_k, self.config.trials_per_k
             )
 
@@ -170,6 +176,7 @@ class ElbowKMeansClustering(Clustering):
 
         best_trial_idx = np.argmin(pred_k_distortions)
         best_pred_k_centroid = pred_k_centroids[best_trial_idx]
+        best_pred_k_indices = pred_k_indices[best_trial_idx]
         best_pred_k_distortion = pred_k_distortions[best_trial_idx]
 
         best_pred_k_centroid = best_pred_k_centroid / np.linalg.norm(best_pred_k_centroid, axis=1, keepdims=True)
@@ -248,16 +255,17 @@ class ElbowKMeansClustering(Clustering):
 
             save_figure(fig, pipeline_state.scratch_output_dir / "elbow.png")
 
-        return best_pred_k_centroid
+        return best_pred_k_centroid, best_pred_k_indices
 
     def __cluster(
         self, samples: NDArray, pipeline_state: PipelineState, k: int, rounds: int
-    ) -> Tuple[List[NDArray], List[float]]:
+    ) -> Tuple[List[NDArray], List[NDArray[np.intp]], List[float]]:
         k_centroids: List[NDArray] = []
+        k_indices: List[NDArray[np.intp]] = []
         k_distortions: List[float] = []
 
         for j in range(rounds):
-            k_centroid, k_distortion = KMeansClustering.kmeans_clustering(
+            round_k_centroids, round_k_indices, round_k_distortion = KMeansClustering.kmeans_clustering(
                 samples,
                 k,
                 self.config.whitening,
@@ -265,10 +273,11 @@ class ElbowKMeansClustering(Clustering):
                 True,
             )
 
-            k_centroids.append(k_centroid)
-            k_distortions.append(float(k_distortion))
+            k_centroids.append(round_k_centroids)
+            k_indices.append(round_k_indices)
+            k_distortions.append(float(round_k_distortion))
 
-        return (k_centroids, k_distortions)
+        return (k_centroids, k_indices, k_distortions)
 
     def _select_distortion(self, ks: List[int], ds: List[float]) -> int:
         pass
@@ -351,7 +360,7 @@ class XMeansClusteringConfig(RangedKClusteringConfig):
 class XMeansClustering(Clustering):
     config: XMeansClusteringConfig
 
-    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> NDArray:
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[NDArray, NDArray[np.intp]]:
         initial_centers = kmeans_plusplus_initializer(samples, self.config.min_clusters).initialize()
 
         xmeans_instance = xmeans(
@@ -367,4 +376,11 @@ class XMeansClustering(Clustering):
 
         centroids = np.array(xmeans_instance.get_centers())
 
-        return centroids
+        indices = -np.ones((samples.shape[0],))
+        for cluster_idx, cluster in enumerate(xmeans_instance.get_clusters()):
+            for sample_idx in cluster:
+                indices[sample_idx] = cluster_idx
+
+        assert not np.any(indices < 0)
+
+        return centroids, indices

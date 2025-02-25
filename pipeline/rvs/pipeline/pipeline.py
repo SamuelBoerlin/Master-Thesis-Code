@@ -359,7 +359,11 @@ class Pipeline:
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__clustering_output_dir / "scratch")
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
-            pipeline_state.sample_clusters = self.clustering.cluster(pipeline_state.sample_embeddings, pipeline_state)
+            parameters, indices = self.clustering.cluster(pipeline_state.sample_embeddings, pipeline_state)
+
+            pipeline_state.sample_cluster_parameters = parameters
+            pipeline_state.sample_cluster_indices = indices.astype(np.intp)
+
             self.__save_clusters(pipeline_state)
 
             if self.config.render_sample_clusters_of_views is not None:
@@ -370,7 +374,7 @@ class Pipeline:
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         pipeline_state.sample_embeddings,
-                        pipeline_state.sample_clusters,
+                        pipeline_state.sample_cluster_parameters,
                         lambda sample_view, image: save_transforms_frame(
                             self.__io.get_output_path(self.__renderer_output_dir),
                             sample_view,
@@ -388,7 +392,7 @@ class Pipeline:
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         pipeline_state.sample_embeddings,
-                        pipeline_state.sample_clusters,
+                        pipeline_state.sample_cluster_parameters,
                         lambda sample_view, image: save_transforms_frame(
                             self.__io.get_output_path(self.__renderer_output_dir),
                             sample_view,
@@ -412,7 +416,9 @@ class Pipeline:
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__selection_output_dir / "scratch")
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
-            pipeline_state.selected_views = self.selection.select(pipeline_state.sample_clusters, pipeline_state)
+            pipeline_state.selected_views = self.selection.select(
+                pipeline_state.sample_cluster_parameters, pipeline_state
+            )
 
             if self.config.render_selected_views:
                 for i, view in enumerate(pipeline_state.selected_views):
@@ -422,7 +428,7 @@ class Pipeline:
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         pipeline_state.sample_embeddings,
-                        pipeline_state.sample_clusters,
+                        pipeline_state.sample_cluster_parameters,
                         lambda sample_view, image: save_transforms_frame(
                             self.__io.get_output_path(self.__renderer_output_dir),
                             sample_view,
@@ -574,14 +580,22 @@ class Pipeline:
     def __save_clusters(self, state: "PipelineState") -> Path:
         path = self.__io.get_output_path(self.__clustering_output_dir / "clusters.json")
         with path.open("w") as f:
-            json.dump(state.sample_clusters.tolist(), f)
+            json.dump(
+                {
+                    "parameters": state.sample_cluster_parameters.tolist(),
+                    "indices": state.sample_cluster_indices.tolist(),
+                },
+                f,
+            )
         CONSOLE.log(f"Saved clusters to {file_link(path)}")
 
     def __load_clusters(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__clustering_output_dir / "clusters.json")
         try:
             with path.open("r") as f:
-                state.sample_clusters = np.array(json.load(f))
+                json_obj = json.load(f)
+                state.sample_cluster_parameters = np.array(json_obj["parameters"])
+                state.sample_cluster_indices = np.array(json_obj["indices"], dtype=np.intp)
             CONSOLE.log(f"Loaded clusters from {file_link(path)}")
             return path
         except Exception as ex:

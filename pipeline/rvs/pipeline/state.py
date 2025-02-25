@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, NamedTuple, Optional
 
+import numpy as np
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
@@ -22,7 +23,8 @@ class PipelineState:
     sample_embeddings: Optional[NDArray] = None
     sample_embeddings_type: Optional[str] = None
     sample_embeddings_dict: Optional[Dict[str, NDArray]] = None
-    sample_clusters: Optional[NDArray] = None
+    sample_cluster_parameters: Optional[NDArray] = None
+    sample_cluster_indices: Optional[NDArray[np.intp]] = None
     selected_views: Optional[List["View"]] = None
 
     scratch_output_dir: Optional[Path] = None
