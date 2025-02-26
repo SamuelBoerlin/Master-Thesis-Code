@@ -548,12 +548,13 @@ class Pipeline:
         return path
 
     def __load_view_paths(self, state: "PipelineState") -> None:
-        try:
-            for view in state.training_views:
-                self.__set_view_path(view, output=False)
-        except Exception as ex:
-            CONSOLE.log("Failed loading view images:")
-            raise ex
+        if state.training_views is not None:
+            try:
+                for view in state.training_views:
+                    self.__set_view_path(view, output=False)
+            except Exception as ex:
+                CONSOLE.log("Failed loading view images:")
+                raise ex
 
     def __set_view_path(self, view: View, output: bool) -> None:
         """Sets the view's path if path is not yet set and if a corresponding image file already exists"""
