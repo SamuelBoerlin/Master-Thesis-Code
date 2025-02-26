@@ -1,6 +1,6 @@
 import shutil
 from dataclasses import dataclass, field
-from typing import Tuple, Type
+from typing import Dict, Tuple, Type
 
 import numpy as np
 from git import List, Optional
@@ -27,7 +27,16 @@ class Clustering:
     def __init__(self, config: ClusteringConfig):
         self.config = config
 
-    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[NDArray, NDArray[np.intp]]:
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[Dict[str, NDArray], NDArray[np.intp]]:
+        pass
+
+    def get_number_of_clusters(self, parameters: Dict[str, NDArray]) -> int:
+        pass
+
+    def hard_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray[np.intp]:
+        pass
+
+    def soft_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray:
         pass
 
 
@@ -56,48 +65,141 @@ class KMeansClusteringConfig(FixedKClusteringConfig):
     whitening: bool = True
     """Whether whitening should be done before K-Means clustering"""
 
+    normalize: bool = True
+    """Whether cluster centroids should be normalized at the end"""
+
 
 class KMeansClustering(Clustering):
     config: KMeansClusteringConfig
 
-    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[NDArray, NDArray[np.intp]]:
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[Dict[str, NDArray], NDArray[np.intp]]:
+        samples = samples.copy()
+
+        normalization = KMeansClustering.kmeans_inplace_whitening(samples, whiten=self.config.whitening)
+
         centroids, indices, _ = KMeansClustering.kmeans_clustering(
             samples,
             self.config.num_clusters,
-            self.config.whitening,
             pipeline_state.pipeline.config.machine.seed,
-            True,
         )
-        return centroids, indices
+
+        KMeansClustering.kmeans_inplace_unwhitening(centroids, normalization)
+
+        if self.config.normalize:
+            centroids /= np.linalg.norm(centroids, axis=1, keepdims=True)
+
+        return {"centroids": centroids, "normalization": normalization}, indices
+
+    def get_number_of_clusters(self, parameters: Dict[str, NDArray]) -> int:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        return len(parameters["centroids"])
+
+    def hard_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray[np.intp]:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        if "normalization" not in parameters:
+            raise ValueError("Missing normalization parameter")
+
+        return KMeansClustering.kmeans_hard_classifier(
+            samples, parameters["centroids"], normalization=parameters["normalization"]
+        )
+
+    def soft_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        if "normalization" not in parameters:
+            raise ValueError("Missing normalization parameter")
+
+        return KMeansClustering.kmeans_pseudo_soft_classifier(
+            samples, parameters["centroids"], parameters["normalization"]
+        )
+
+    @staticmethod
+    def kmeans_inplace_whitening(xs: NDArray, whiten: bool = True) -> NDArray:
+        normalization = np.ones((xs.shape[1],))
+
+        if whiten:
+            # Do "whitening" manually so we can undo it again afterwards
+            # samples = whiten(samples)
+
+            if not np.isfinite(xs).all():
+                raise ValueError("array must not contain infs or NaNs")
+
+            # scipy.cluster.vq whiten
+            std_dev = xs.std(axis=0)
+            zero_std_mask = std_dev == 0
+            if zero_std_mask.any():
+                std_dev[zero_std_mask] = 1.0
+
+            normalization = np.reciprocal(std_dev)
+
+            xs *= normalization
+
+        return normalization
+
+    @staticmethod
+    def kmeans_inplace_unwhitening(xs: NDArray, normalization: NDArray) -> None:
+        xs /= normalization
 
     @staticmethod
     def kmeans_clustering(
-        samples: NDArray, num_clusters: int, whitening: bool, seed: int, normalize_centroids: bool
+        samples: NDArray,
+        num_clusters: int,
+        seed: int,
     ) -> Tuple[NDArray, NDArray[np.intp], float]:
-        std_dev: NDArray = None
-
-        if whitening:
-            # Do "whitening" manually so we can undo it again afterwards
-            # samples = whiten(samples)
-            std_dev = samples.std(axis=0)
-            samples /= std_dev
-
         centroids, distortion = kmeans(
             samples,
             num_clusters,
             seed=seed,
         )
 
-        indices, _ = vq(samples, centroids)
-
-        if whitening and std_dev is not None:
-            # Undo "whitening"
-            centroids *= std_dev
-
-        if normalize_centroids:
-            centroids = centroids / np.linalg.norm(centroids, axis=1, keepdims=True)
+        indices = KMeansClustering.kmeans_hard_classifier(samples, centroids)
 
         return (centroids, indices, distortion)
+
+    @staticmethod
+    def kmeans_hard_classifier(
+        samples: NDArray,
+        centroids: NDArray,
+        normalization: Optional[NDArray] = None,
+    ) -> NDArray[np.intp]:
+        if normalization is not None:
+            samples = samples * normalization
+            centroids = centroids * normalization
+
+        indices, _ = vq(samples, centroids)
+
+        return indices
+
+    @staticmethod
+    def kmeans_pseudo_soft_classifier(
+        samples: NDArray,
+        centroids: NDArray,
+        normalization: Optional[NDArray] = None,
+    ) -> NDArray:
+        """This isn't really a soft classifier with proper probability distributions but should suffice for debugging purposes"""
+
+        if normalization is not None:
+            samples = samples * normalization
+            centroids = centroids * normalization
+
+        soft_labels = np.zeros((samples.shape[0], centroids.shape[0]))
+
+        def dst(xs: NDArray, x: NDArray):
+            return np.sqrt(np.sum((xs - x) ** 2, axis=1))
+
+        for i in range(samples.shape[0]):
+            sample = samples[i]
+
+            distances = dst(centroids, sample)
+
+            soft_labels[i] = distances / np.sum(distances)
+
+        return soft_labels
 
 
 @dataclass
@@ -109,6 +211,9 @@ class ElbowKMeansClusteringConfig(RangedKClusteringConfig):
 
     whitening: bool = True
     """Whether whitening should be done before K-Means clustering"""
+
+    normalize: bool = True
+    """Whether cluster centroids should be normalized at the end"""
 
 
 class ElbowKMeansClustering(Clustering):
@@ -128,9 +233,13 @@ class ElbowKMeansClustering(Clustering):
         else:
             self._num_clusters = list(range(self.config.min_clusters, self.config.max_clusters + 1))
 
-    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[NDArray, NDArray[np.intp]]:
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[Dict[str, NDArray], NDArray[np.intp]]:
+        samples = samples.copy()
+
+        normalization = KMeansClustering.kmeans_inplace_whitening(samples, whiten=self.config.whitening)
+
         centroids: List[List[NDArray]] = []
-        indices: List[List[NDArray[np.intp]]]
+        indices: List[List[NDArray[np.intp]]] = []
         distortions: List[List[float]] = []
 
         for k in self._num_clusters:
@@ -138,6 +247,13 @@ class ElbowKMeansClustering(Clustering):
             centroids.append(k_centroids)
             indices.append(k_indices)
             distortions.append(k_distortions)
+
+        for centroids_list in centroids:
+            for centroids_array in centroids_list:
+                KMeansClustering.kmeans_inplace_unwhitening(centroids_array, normalization)
+
+                if self.config.normalize:
+                    centroids_array /= np.linalg.norm(centroids_array, axis=1, keepdims=True)
 
         avg_distortions = [np.mean(np.array(k_distortions)) for k_distortions in distortions]
 
@@ -171,15 +287,15 @@ class ElbowKMeansClustering(Clustering):
                 samples, pipeline_state, pred_k, self.config.trials_per_k
             )
 
-        best_pred_k_centroid: NDArray
+        best_pred_k_centroids: NDArray
         best_pred_k_distortion: float
 
         best_trial_idx = np.argmin(pred_k_distortions)
-        best_pred_k_centroid = pred_k_centroids[best_trial_idx]
+        best_pred_k_centroids = pred_k_centroids[best_trial_idx]
         best_pred_k_indices = pred_k_indices[best_trial_idx]
         best_pred_k_distortion = pred_k_distortions[best_trial_idx]
 
-        best_pred_k_centroid = best_pred_k_centroid / np.linalg.norm(best_pred_k_centroid, axis=1, keepdims=True)
+        best_pred_k_centroids = best_pred_k_centroids / np.linalg.norm(best_pred_k_centroids, axis=1, keepdims=True)
 
         if pipeline_state.scratch_output_dir is not None:
             avg_elbow = Elbow(
@@ -255,10 +371,42 @@ class ElbowKMeansClustering(Clustering):
 
             save_figure(fig, pipeline_state.scratch_output_dir / "elbow.png")
 
-        return best_pred_k_centroid, best_pred_k_indices
+        return {"centroids": best_pred_k_centroids, "normalization": normalization}, best_pred_k_indices
+
+    def get_number_of_clusters(self, parameters: Dict[str, NDArray]) -> int:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        return len(parameters["centroids"])
+
+    def hard_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray[np.intp]:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        if "normalization" not in parameters:
+            raise ValueError("Missing normalization parameter")
+
+        return KMeansClustering.kmeans_hard_classifier(
+            samples, parameters["centroids"], normalization=parameters["normalization"]
+        )
+
+    def soft_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        if "normalization" not in parameters:
+            raise ValueError("Missing normalization parameter")
+
+        return KMeansClustering.kmeans_pseudo_soft_classifier(
+            samples, parameters["centroids"], parameters["normalization"]
+        )
 
     def __cluster(
-        self, samples: NDArray, pipeline_state: PipelineState, k: int, rounds: int
+        self,
+        samples: NDArray,
+        pipeline_state: PipelineState,
+        k: int,
+        rounds: int,
     ) -> Tuple[List[NDArray], List[NDArray[np.intp]], List[float]]:
         k_centroids: List[NDArray] = []
         k_indices: List[NDArray[np.intp]] = []
@@ -268,9 +416,7 @@ class ElbowKMeansClustering(Clustering):
             round_k_centroids, round_k_indices, round_k_distortion = KMeansClustering.kmeans_clustering(
                 samples,
                 k,
-                self.config.whitening,
                 pipeline_state.pipeline.config.machine.seed + j,
-                True,
             )
 
             k_centroids.append(round_k_centroids)
@@ -356,11 +502,21 @@ class XMeansClusteringConfig(RangedKClusteringConfig):
     kmeans_iterations: int = 10
     """Number of K-Means iterations in each Improve-Params step"""
 
+    whitening: bool = True
+    """Whether whitening should be done before K-Means clustering"""
+
+    normalize: bool = True
+    """Whether cluster centroids should be normalized at the end"""
+
 
 class XMeansClustering(Clustering):
     config: XMeansClusteringConfig
 
-    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[NDArray, NDArray[np.intp]]:
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[Dict[str, NDArray], NDArray[np.intp]]:
+        samples = samples.copy()
+
+        normalization = KMeansClustering.kmeans_inplace_whitening(samples, whiten=self.config.whitening)
+
         initial_centers = kmeans_plusplus_initializer(samples, self.config.min_clusters).initialize()
 
         xmeans_instance = xmeans(
@@ -376,6 +532,11 @@ class XMeansClustering(Clustering):
 
         centroids = np.array(xmeans_instance.get_centers())
 
+        KMeansClustering.kmeans_inplace_unwhitening(centroids, normalization)
+
+        if self.config.normalize:
+            centroids /= np.linalg.norm(centroids, axis=1, keepdims=True)
+
         indices = -np.ones((samples.shape[0],))
         for cluster_idx, cluster in enumerate(xmeans_instance.get_clusters()):
             for sample_idx in cluster:
@@ -383,4 +544,32 @@ class XMeansClustering(Clustering):
 
         assert not np.any(indices < 0)
 
-        return centroids, indices
+        return {"centroids": centroids, "normalization": normalization}, indices
+
+    def get_number_of_clusters(self, parameters: Dict[str, NDArray]) -> int:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        return len(parameters["centroids"])
+
+    def hard_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray[np.intp]:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        if "normalization" not in parameters:
+            raise ValueError("Missing normalization parameter")
+
+        return KMeansClustering.kmeans_hard_classifier(
+            samples, parameters["centroids"], normalization=parameters["normalization"]
+        )
+
+    def soft_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        if "normalization" not in parameters:
+            raise ValueError("Missing normalization parameter")
+
+        return KMeansClustering.kmeans_pseudo_soft_classifier(
+            samples, parameters["centroids"], parameters["normalization"]
+        )

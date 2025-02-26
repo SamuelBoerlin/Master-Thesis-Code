@@ -193,7 +193,11 @@ class Pipeline:
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__renderer_output_dir / "scratch")
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
-            pipeline_state.training_views = self.views.generate(pipeline_state)
+            views = self.views.generate(pipeline_state)
+            pipeline_state.training_views = [View(view.index, view.transform.copy(), view.path) for view in views]
+            for view in pipeline_state.training_views:
+                view.transform.setflags(write=False)
+
             transforms_path = self.__save_transforms(pipeline_state)
         elif self.should_load_stage(PipelineStage.SAMPLE_VIEWS):
             CONSOLE.log("Loading view transforms...")
@@ -224,9 +228,14 @@ class Pipeline:
 
                 render_output = RenderOutput(path=get_save_path, callback=callback)
 
-                pipeline_state.model_normalization = self.renderer.render(
+                normalization = self.renderer.render(
                     self.config.model_file, pipeline_state.training_views, render_output, pipeline_state
                 )
+                pipeline_state.model_normalization = Normalization(
+                    normalization.scale.copy(), normalization.offset.copy()
+                )
+                pipeline_state.model_normalization.scale.setflags(write=False)
+                pipeline_state.model_normalization.offset.setflags(write=False)
 
             self.__save_model_normalization(pipeline_state)
 
@@ -280,7 +289,9 @@ class Pipeline:
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__sampler_output_dir / "scratch")
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
-            pipeline_state.sample_positions = self.sampler.sample(self.config.model_file, pipeline_state)
+            pipeline_state.sample_positions = self.sampler.sample(self.config.model_file, pipeline_state).copy()
+            pipeline_state.sample_positions.setflags(write=False)
+
             self.__save_sample_positions(pipeline_state)
 
             if self.config.render_sample_positions_of_views is not None:
@@ -332,7 +343,8 @@ class Pipeline:
             pipeline_state.sample_embeddings_dict = dict()
 
             for i, embedding_config in enumerate(self.config.embeddings):
-                embeddings = self.field.sample(embedding_config, pipeline_state.sample_positions)
+                embeddings = self.field.sample(embedding_config, pipeline_state.sample_positions).copy()
+                embeddings.setflags(write=False)
 
                 if i == 0:
                     pipeline_state.sample_embeddings = embeddings
@@ -361,8 +373,11 @@ class Pipeline:
 
             parameters, indices = self.clustering.cluster(pipeline_state.sample_embeddings, pipeline_state)
 
-            pipeline_state.sample_cluster_parameters = parameters
-            pipeline_state.sample_cluster_indices = indices.astype(np.intp)
+            pipeline_state.sample_cluster_parameters = {key: value.copy() for key, value in parameters.items()}
+            for value in pipeline_state.sample_cluster_parameters.values():
+                value.setflags(write=False)
+            pipeline_state.sample_cluster_indices = indices.astype(np.intp, copy=True)
+            pipeline_state.sample_cluster_indices.setflags(write=False)
 
             self.__save_clusters(pipeline_state)
 
@@ -374,7 +389,9 @@ class Pipeline:
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         pipeline_state.sample_embeddings,
-                        pipeline_state.sample_cluster_parameters,
+                        self.clustering.get_number_of_clusters(pipeline_state.sample_cluster_parameters),
+                        lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
+                        lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
                         lambda sample_view, image: save_transforms_frame(
                             self.__io.get_output_path(self.__renderer_output_dir),
                             sample_view,
@@ -392,7 +409,9 @@ class Pipeline:
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         pipeline_state.sample_embeddings,
-                        pipeline_state.sample_cluster_parameters,
+                        self.clustering.get_number_of_clusters(pipeline_state.sample_cluster_parameters),
+                        lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
+                        lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
                         lambda sample_view, image: save_transforms_frame(
                             self.__io.get_output_path(self.__renderer_output_dir),
                             sample_view,
@@ -416,9 +435,15 @@ class Pipeline:
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__selection_output_dir / "scratch")
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
-            pipeline_state.selected_views = self.selection.select(
-                pipeline_state.sample_cluster_parameters, pipeline_state
+            views = self.selection.select(
+                self.clustering.get_number_of_clusters(pipeline_state.sample_cluster_parameters),
+                lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
+                lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
+                pipeline_state,
             )
+            pipeline_state.selected_views = [View(view.index, view.transform.copy(), view.path) for view in views]
+            for view in pipeline_state.selected_views:
+                view.transform.setflags(write=False)
 
             if self.config.render_selected_views:
                 for i, view in enumerate(pipeline_state.selected_views):
@@ -428,7 +453,9 @@ class Pipeline:
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         pipeline_state.sample_embeddings,
-                        pipeline_state.sample_cluster_parameters,
+                        self.clustering.get_number_of_clusters(pipeline_state.sample_cluster_parameters),
+                        lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
+                        lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
                         lambda sample_view, image: save_transforms_frame(
                             self.__io.get_output_path(self.__renderer_output_dir),
                             sample_view,
@@ -474,6 +501,8 @@ class Pipeline:
             )
             # TODO Check if fl_x etc. matches with renderer config
             state.training_views = views
+            for view in state.training_views:
+                view.transform.setflags(write=False)
             CONSOLE.log(f"Loaded views transforms from {file_link(path)}")
             return path
         except Exception as ex:
@@ -526,6 +555,8 @@ class Pipeline:
                     scale=np.array(obj["scale"]),
                     offset=np.array(obj["offset"]),
                 )
+                state.model_normalization.scale.setflags(write=False)
+                state.model_normalization.offset.setflags(write=False)
         except Exception as ex:
             CONSOLE.log("Failed loading normalization:")
             raise ex
@@ -541,6 +572,7 @@ class Pipeline:
         try:
             with path.open("r") as f:
                 state.sample_positions = np.array(json.load(f))
+                state.sample_positions.setflags(write=False)
             CONSOLE.log(f"Loaded positions from {file_link(path)}")
             return path
         except Exception as ex:
@@ -569,8 +601,11 @@ class Pipeline:
                 state.sample_embeddings_dict = {
                     type: np.array(embeddings) for type, embeddings in embeddings_list_dict.items()
                 }
+                for embeddings in state.sample_embeddings_dict.values():
+                    embeddings.setflags(write=False)
                 state.sample_embeddings_type = obj["type"]
                 state.sample_embeddings = state.sample_embeddings_dict[state.sample_embeddings_type]
+                state.sample_embeddings.setflags(write=False)
             CONSOLE.log(f"Loaded embeddings from {file_link(path)}")
             return path
         except Exception as ex:
@@ -582,7 +617,7 @@ class Pipeline:
         with path.open("w") as f:
             json.dump(
                 {
-                    "parameters": state.sample_cluster_parameters.tolist(),
+                    "parameters": {key: value.tolist() for key, value in state.sample_cluster_parameters.items()},
                     "indices": state.sample_cluster_indices.tolist(),
                 },
                 f,
@@ -594,8 +629,12 @@ class Pipeline:
         try:
             with path.open("r") as f:
                 json_obj = json.load(f)
-                state.sample_cluster_parameters = np.array(json_obj["parameters"])
+                parameters_dict: Dict[str, List] = json_obj["parameters"]
+                state.sample_cluster_parameters = {key: np.array(value) for key, value in parameters_dict.items()}
+                for value in state.sample_cluster_parameters.values():
+                    value.setflags(write=False)
                 state.sample_cluster_indices = np.array(json_obj["indices"], dtype=np.intp)
+                state.sample_cluster_indices.setflags(write=False)
             CONSOLE.log(f"Loaded clusters from {file_link(path)}")
             return path
         except Exception as ex:

@@ -25,7 +25,7 @@ from rvs.pipeline.sampler import (
     FarthestPointSamplingDensityTrimeshPositonSamplerConfig,
     MinDistanceTrimeshPositionSamplerConfig,
 )
-from rvs.pipeline.selection import BestTrainingViewSelectionConfig
+from rvs.pipeline.selection import MostSimilarToCentroidTrainingViewSelectionConfig
 from rvs.pipeline.views import FermatSpiralViewsConfig, SphereViewsConfig
 from rvs.utils.dataclasses import extend_dataclass_obj
 
@@ -119,7 +119,7 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
     PipelineStage.SELECT_VIEWS: {
         "best_training_selection": (
             "Views selected from training views that are most similar to cluster embeddings",
-            BestTrainingViewSelectionConfig(),
+            MostSimilarToCentroidTrainingViewSelectionConfig(),
         ),
     },
 }

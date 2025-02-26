@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Type
+from typing import Callable, List, Type
 
 import numpy as np
 import torch
@@ -25,18 +25,41 @@ class ViewSelection:
     def __init__(self, config: ViewSelectionConfig):
         self.config = config
 
-    def select(self, clusters: NDArray, pipeline_state: PipelineState) -> List[View]:
+    def select(
+        self,
+        num_clusters: int,
+        hard_classifier: Callable[[NDArray], NDArray[np.intp]],
+        soft_classifier: Callable[[NDArray], NDArray],
+        pipeline_state: PipelineState,
+    ) -> List[View]:
         pass
 
 
 @dataclass
-class BestTrainingViewSelectionConfig(ViewSelectionConfig):
-    _target: Type = field(default_factory=lambda: BestTrainingViewSelection)
+class MostSimilarToCentroidTrainingViewSelectionConfig(ViewSelectionConfig):
+    _target: Type = field(default_factory=lambda: MostSimilarToCentroidTrainingViewSelection)
 
 
-class BestTrainingViewSelection(ViewSelection):
-    def select(self, clusters: NDArray, pipeline_state: PipelineState) -> List[View]:
-        num_clusters = clusters.shape[0]
+class BestTrainingViewSelectionConfig(MostSimilarToCentroidTrainingViewSelectionConfig):
+    """Deprecated, only for backwards compatibility"""
+
+    pass
+
+
+class MostSimilarToCentroidTrainingViewSelection(ViewSelection):
+    def select(
+        self,
+        num_clusters: int,
+        hard_classifier: Callable[[NDArray], NDArray[np.intp]],
+        soft_classifier: Callable[[NDArray], NDArray],
+        pipeline_state: PipelineState,
+    ) -> List[View]:
+        if "centroids" not in pipeline_state.sample_cluster_parameters:
+            raise ValueError("Cluster centroids required")
+
+        centroids = pipeline_state.sample_cluster_parameters["centroids"]
+
+        num_clusters = centroids.shape[0]
         if num_clusters <= 0:
             return []
 
@@ -69,10 +92,16 @@ class BestTrainingViewSelection(ViewSelection):
             image_idx = lerf_datamanager.train_dataset[i]["image_idx"]
 
             for j in range(num_clusters):
-                sim = np.dot(clusters[j], image_embedding)
+                sim = np.dot(centroids[j], image_embedding)
 
                 if sim > best_sim[j]:
                     best_sim[j] = sim
                     best_idx[j] = image_idx
 
         return [pipeline_state.training_views[best_idx[j]] for j in range(num_clusters)]
+
+
+class BestTrainingViewSelection(MostSimilarToCentroidTrainingViewSelection):
+    """Deprecated, only for backwards compatibility"""
+
+    pass

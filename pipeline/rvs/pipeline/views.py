@@ -20,10 +20,10 @@ class View:
     transform: NDArray
     path: Optional[Path]
 
-    def __init__(self, index: int, transform: NDArray) -> None:
+    def __init__(self, index: int, transform: NDArray, path: Optional[Path] = None) -> None:
         self.index = index
         self.transform = transform
-        self.path = None
+        self.path = path
 
 
 class Views:

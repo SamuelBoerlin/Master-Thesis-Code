@@ -47,12 +47,65 @@ def render_sample_clusters(
     normalization: Normalization,
     sample_positions: NDArray,
     sample_embeddings: NDArray,
-    sample_clusters: NDArray,
+    num_clusters: int,
+    hard_classifier: Callable[[NDArray], NDArray[np.intp]],
+    soft_classifier: Callable[[NDArray], NDArray],
     callback: Callable[[View, im.Image], None],
     hard_assignments: bool = False,
     render_as_plot: bool = True,
 ) -> None:
-    num_clusters = sample_clusters.shape[0]
+    num_samples = sample_embeddings.shape[0]
+
+    colors = cluster_colors(num_clusters)
+    labels = [str(i + 1) for i in range(num_clusters)]
+
+    sample_colors = np.zeros((num_samples, 3))
+
+    for i in range(num_samples):
+        sample_embedding = sample_embeddings[i] / np.linalg.norm(sample_embeddings[i])
+
+        if hard_assignments:
+            cluster_idx = hard_classifier(np.array([sample_embedding]))[0]
+            sample_colors[i] = colors[cluster_idx]
+        else:
+            soft_labels = soft_classifier(np.array([sample_embedding]))[0]
+            sample_colors[i] += soft_labels * colors
+
+    output = RenderOutput(
+        path=None,
+        callback=lambda view, image: render_image_plot(
+            view, image, callback, figure_setup=color_legend(colors, labels, "Clusters")
+        )
+        if render_as_plot
+        else callback(view, image),
+    )
+
+    state = PipelineState(None)
+    state.model_normalization = normalization
+
+    renderer = TrimeshRenderer(TrimeshRendererConfig())
+    renderer.render(
+        file,
+        [view],
+        output,
+        state,
+        sample_positions=sample_positions,
+        sample_colors=sample_colors,
+    )
+
+
+def render_sample_kmeans_clusters_with_cosine_similarity(
+    file: Path,
+    view: View,
+    normalization: Normalization,
+    sample_positions: NDArray,
+    sample_embeddings: NDArray,
+    cluster_centroids: NDArray,
+    callback: Callable[[View, im.Image], None],
+    hard_assignments: bool = False,
+    render_as_plot: bool = True,
+) -> None:
+    num_clusters = cluster_centroids.shape[0]
     num_samples = sample_embeddings.shape[0]
 
     colors = cluster_colors(num_clusters)
@@ -66,7 +119,7 @@ def render_sample_clusters(
         if not hard_assignments:
             sum = 0.0
             for j in range(num_clusters):
-                weight = np.dot(sample_clusters[j], sample_embedding)
+                weight = np.dot(cluster_centroids[j], sample_embedding)
                 sample_colors[i] += weight * colors[j]
                 sum += weight
             if sum > 0.0:
@@ -74,7 +127,7 @@ def render_sample_clusters(
         else:
             best = -1.0
             for j in range(num_clusters):
-                sim = np.dot(sample_clusters[j], sample_embedding)
+                sim = np.dot(cluster_centroids[j], sample_embedding)
                 if sim > best:
                     best = sim
                     sample_colors[i] = colors[j]

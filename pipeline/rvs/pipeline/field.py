@@ -203,7 +203,7 @@ class Field:
 
     def __transform_positions(self, lerf_model: LERFModel, positions: NDArray) -> Tensor:
         # Convert positions np array to tensor
-        positions: Tensor = torch.from_numpy(positions).to(lerf_model.device).reshape((1, -1, 3))
+        positions: Tensor = torch.from_numpy(positions.copy()).to(lerf_model.device).reshape((1, -1, 3))
 
         # Transform
         positions = lerf_model.lerf_field.spatial_distortion(positions)

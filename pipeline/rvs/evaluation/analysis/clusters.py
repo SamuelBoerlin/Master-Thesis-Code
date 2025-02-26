@@ -40,7 +40,7 @@ def count_clusters(
 
         try:
             with clusters_file.open(mode="r") as f:
-                clusters = np.array(json.load(f))
+                clusters = np.array(json.load(f)["parameters"]["centroids"])
         except Exception:
             pass
 
