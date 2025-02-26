@@ -75,7 +75,11 @@ PipelineStage.DEPENDENCIES = {
     PipelineStage.RENDER_VIEWS: {PipelineStage.SAMPLE_VIEWS},
     PipelineStage.TRAIN_FIELD: {PipelineStage.SAMPLE_VIEWS, PipelineStage.RENDER_VIEWS},
     PipelineStage.SAMPLE_POSITIONS: {PipelineStage.RENDER_VIEWS},  # Normalization
-    PipelineStage.SAMPLE_EMBEDDINGS: {PipelineStage.SAMPLE_POSITIONS, PipelineStage.TRAIN_FIELD},
+    PipelineStage.SAMPLE_EMBEDDINGS: {
+        PipelineStage.SAMPLE_VIEWS,
+        PipelineStage.SAMPLE_POSITIONS,
+        PipelineStage.TRAIN_FIELD,
+    },
     PipelineStage.CLUSTER_EMBEDDINGS: {PipelineStage.SAMPLE_EMBEDDINGS},
     PipelineStage.SELECT_VIEWS: {PipelineStage.CLUSTER_EMBEDDINGS},
     PipelineStage.OUTPUT: {PipelineStage.SELECT_VIEWS},
