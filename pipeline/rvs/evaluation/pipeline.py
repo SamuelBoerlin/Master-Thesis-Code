@@ -9,7 +9,8 @@ import torch
 
 from rvs.evaluation.index import save_index
 from rvs.pipeline.io import PipelineIO
-from rvs.pipeline.pipeline import Pipeline, PipelineConfig, PipelineStage
+from rvs.pipeline.pipeline import Pipeline, PipelineConfig
+from rvs.pipeline.stage import PipelineStage
 from rvs.scripts.rvs import _set_random_seed
 from rvs.utils.hash import hash_file_sha1
 from rvs.utils.nerfstudio import create_transforms_json, get_frame_name

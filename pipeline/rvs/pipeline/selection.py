@@ -11,6 +11,7 @@ from numpy.typing import NDArray
 from torch import Tensor
 
 from rvs.pipeline.renderer import View
+from rvs.pipeline.stage import PipelineStage, RequirePipelineStage
 from rvs.pipeline.state import PipelineState
 
 
@@ -46,7 +47,13 @@ class BestTrainingViewSelectionConfig(MostSimilarToCentroidTrainingViewSelection
     pass
 
 
-class MostSimilarToCentroidTrainingViewSelection(ViewSelection):
+class MostSimilarToCentroidTrainingViewSelection(ViewSelection, RequirePipelineStage):
+    config: MostSimilarToCentroidTrainingViewSelectionConfig
+
+    def __init__(self, config: MostSimilarToCentroidTrainingViewSelectionConfig) -> None:
+        super().__init__(config)
+        self.required_stages = {PipelineStage.SAMPLE_VIEWS, PipelineStage.TRAIN_FIELD}
+
     def select(
         self,
         num_clusters: int,

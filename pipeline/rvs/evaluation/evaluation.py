@@ -19,7 +19,8 @@ from rvs.evaluation.index import load_index
 from rvs.evaluation.lvis import LVISDataset
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.worker import pipeline_worker_func
-from rvs.pipeline.pipeline import PipelineConfig, PipelineStage
+from rvs.pipeline.pipeline import PipelineConfig
+from rvs.pipeline.stage import PipelineStage
 from rvs.utils.config import find_changed_config_fields, find_config_working_dir, load_config
 from rvs.utils.console import file_link
 from rvs.utils.hash import hash_file_sha1

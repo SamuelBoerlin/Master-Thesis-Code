@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional, Set
 
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
-from rvs.pipeline.pipeline import PipelineStage
+from rvs.pipeline.stage import PipelineStage
 from rvs.utils.process import ProcessResult
 
 

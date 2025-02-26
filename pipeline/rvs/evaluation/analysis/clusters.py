@@ -16,7 +16,7 @@ from rvs.evaluation.analysis.histogram import (
 )
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
-from rvs.pipeline.pipeline import PipelineStage
+from rvs.pipeline.stage import PipelineStage
 from rvs.utils.elbow import Elbow, load_elbow
 from rvs.utils.plot import elbow_plot, save_figure
 

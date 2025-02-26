@@ -1,7 +1,6 @@
 import dataclasses
 import json
 from dataclasses import dataclass, replace
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Type
 
@@ -18,6 +17,7 @@ from rvs.pipeline.io import PipelineIO
 from rvs.pipeline.renderer import Normalization, Renderer, RendererConfig, RenderOutput
 from rvs.pipeline.sampler import PositionSampler, PositionSamplerConfig
 from rvs.pipeline.selection import ViewSelection, ViewSelectionConfig
+from rvs.pipeline.stage import PipelineStage, RequirePipelineStage
 from rvs.pipeline.state import PipelineState
 from rvs.pipeline.views import View, Views, ViewsConfig
 from rvs.utils.console import file_link
@@ -60,7 +60,7 @@ class PipelineConfig(ExperimentConfig):
     model_file: Path = None
     """Path to .glb 3D model file."""
 
-    stages: Optional[Set["PipelineStage"]] = None
+    stages: Optional[Set[PipelineStage]] = None
     """Which stages of the pipeline should be run. If empty all stages are run."""
 
     #################
@@ -72,11 +72,14 @@ class PipelineConfig(ExperimentConfig):
     render_sample_clusters_of_views: Optional[List[int]] = None
     """Views to render the sample clusters of"""
 
+    render_sample_clusters_of_selected_views: bool = False
+    """Whether to render the sample clusters from the selected views"""
+
     render_sample_clusters_hard_assignment: bool = True
     """Whether cluster assignments should be rendered as hard assignments"""
 
-    render_selected_views: bool = False
-    """Whether to render selected views"""
+    render_sample_as_plot: bool = False
+    """Whether to render the samples inside a plot"""
 
     def setup(self, **kwargs) -> Any:
         self.propagate_experiment_settings()
@@ -141,6 +144,8 @@ class Pipeline:
     __clustering_output_dir: Path
     __selection_output_dir: Path
 
+    __stage_dependencies: Dict[PipelineStage, Set[PipelineStage]]
+
     @property
     def output_dir(self) -> Path:
         return self.config.get_base_dir()
@@ -182,8 +187,61 @@ class Pipeline:
 
         self.selection = self.config.selection.setup()
 
+        self.__stage_dependencies = {
+            stage: set(dependencies) for stage, dependencies in PipelineStage.DEPENDENCIES.items()
+        }
+
+        for stage in PipelineStage:
+            assert stage in self.__stage_dependencies
+
+        stages_components_dict: Dict[PipelineStage, List[Any]] = {
+            PipelineStage.SAMPLE_VIEWS: [self.views],
+            PipelineStage.RENDER_VIEWS: [self.renderer],
+            PipelineStage.TRAIN_FIELD: [self.field],
+            PipelineStage.SAMPLE_POSITIONS: [self.sampler],
+            PipelineStage.SAMPLE_EMBEDDINGS: [self.field],
+            PipelineStage.CLUSTER_EMBEDDINGS: [self.clustering],
+            PipelineStage.SELECT_VIEWS: [self.selection],
+            PipelineStage.OUTPUT: [],
+        }
+
+        for stage in PipelineStage:
+            assert stage in stages_components_dict
+
+        for stage, components in stages_components_dict.items():
+            for component in components:
+                if isinstance(component, RequirePipelineStage):
+                    requirements: RequirePipelineStage = component
+                    self.__stage_dependencies[stage].update(requirements.required_stages)
+
+        if self.config.render_sample_positions_of_views:
+            self.__stage_dependencies[PipelineStage.SAMPLE_POSITIONS].update(
+                {PipelineStage.SAMPLE_VIEWS, PipelineStage.RENDER_VIEWS}
+            )
+
+        if self.config.render_sample_clusters_of_views:
+            self.__stage_dependencies[PipelineStage.CLUSTER_EMBEDDINGS].update(
+                {PipelineStage.SAMPLE_VIEWS, PipelineStage.RENDER_VIEWS, PipelineStage.SAMPLE_POSITIONS}
+            )
+
+        if self.config.render_sample_clusters_of_selected_views:
+            self.__stage_dependencies[PipelineStage.SELECT_VIEWS].update(
+                {
+                    PipelineStage.RENDER_VIEWS,
+                    PipelineStage.SAMPLE_POSITIONS,
+                    PipelineStage.SAMPLE_EMBEDDINGS,
+                }
+            )
+
     def run(self) -> "PipelineState":
         pipeline_state = PipelineState(self)
+
+        CONSOLE.log(
+            f"Loading stages: [{', '.join([stage for stage in PipelineStage if not self.should_run_stage(stage) and self.should_load_stage(stage)])}]"
+        )
+        CONSOLE.log(
+            f"Running stages: [{', '.join([stage for stage in PipelineStage if self.should_run_stage(stage)])}]"
+        )
 
         pipeline_state.scratch_output_dir = None
 
@@ -289,42 +347,29 @@ class Pipeline:
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__sampler_output_dir / "scratch")
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
-            pipeline_state.sample_positions = self.sampler.sample(self.config.model_file, pipeline_state).copy()
+            pipeline_state.sample_positions = self.sampler.sample(
+                self.config.model_file, pipeline_state.model_normalization, pipeline_state
+            ).copy()
             pipeline_state.sample_positions.setflags(write=False)
 
             self.__save_sample_positions(pipeline_state)
 
             if self.config.render_sample_positions_of_views is not None:
-                for i in self.config.render_sample_positions_of_views:
+                for i, view_idx in enumerate(self.config.render_sample_positions_of_views):
                     render_sample_positions(
                         self.config.model_file,
-                        pipeline_state.training_views[i],
+                        pipeline_state.training_views[view_idx],
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         lambda sample_view, image: save_transforms_frame(
-                            self.__io.get_output_path(self.__renderer_output_dir),
+                            self.__io.get_output_path(self.__sampler_output_dir),
                             sample_view,
                             image,
                             frame_name=get_frame_name(
-                                pipeline_state.training_views[i], frame_name="sample_positions_{}.png"
+                                pipeline_state.training_views[view_idx], frame_name=f"positions_{i}_{{}}.png"
                             ),
                         ),
-                        render_as_plot=False,
-                    )
-                    render_sample_positions(
-                        self.config.model_file,
-                        pipeline_state.training_views[i],
-                        pipeline_state.model_normalization,
-                        pipeline_state.sample_positions,
-                        lambda sample_view, image: save_transforms_frame(
-                            self.__io.get_output_path(self.__renderer_output_dir),
-                            sample_view,
-                            image,
-                            frame_name=get_frame_name(
-                                pipeline_state.training_views[i], frame_name="sample_positions_{}_plot.png"
-                            ),
-                        ),
-                        render_as_plot=True,
+                        render_as_plot=self.config.render_sample_as_plot,
                     )
         elif self.should_load_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Loading positions...")
@@ -382,10 +427,10 @@ class Pipeline:
             self.__save_clusters(pipeline_state)
 
             if self.config.render_sample_clusters_of_views is not None:
-                for i in self.config.render_sample_clusters_of_views:
+                for i, view_idx in enumerate(self.config.render_sample_clusters_of_views):
                     render_sample_clusters(
                         self.config.model_file,
-                        pipeline_state.training_views[i],
+                        pipeline_state.training_views[view_idx],
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
                         pipeline_state.sample_embeddings,
@@ -393,35 +438,15 @@ class Pipeline:
                         lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
                         lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
                         lambda sample_view, image: save_transforms_frame(
-                            self.__io.get_output_path(self.__renderer_output_dir),
+                            self.__io.get_output_path(self.__clustering_output_dir),
                             sample_view,
                             image,
                             frame_name=get_frame_name(
-                                pipeline_state.training_views[i], frame_name="sample_clusters_{}.png"
+                                pipeline_state.training_views[view_idx], frame_name=f"clusters_{i}_{{}}.png"
                             ),
                         ),
                         hard_assignments=self.config.render_sample_clusters_hard_assignment,
-                        render_as_plot=False,
-                    )
-                    render_sample_clusters(
-                        self.config.model_file,
-                        pipeline_state.training_views[i],
-                        pipeline_state.model_normalization,
-                        pipeline_state.sample_positions,
-                        pipeline_state.sample_embeddings,
-                        self.clustering.get_number_of_clusters(pipeline_state.sample_cluster_parameters),
-                        lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
-                        lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
-                        lambda sample_view, image: save_transforms_frame(
-                            self.__io.get_output_path(self.__renderer_output_dir),
-                            sample_view,
-                            image,
-                            frame_name=get_frame_name(
-                                pipeline_state.training_views[i], frame_name="sample_clusters_{}_plot.png"
-                            ),
-                        ),
-                        hard_assignments=self.config.render_sample_clusters_hard_assignment,
-                        render_as_plot=True,
+                        render_as_plot=self.config.render_sample_as_plot,
                     )
         elif self.should_load_stage(PipelineStage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Loading clusters...")
@@ -445,7 +470,7 @@ class Pipeline:
             for view in pipeline_state.selected_views:
                 view.transform.setflags(write=False)
 
-            if self.config.render_selected_views:
+            if self.config.render_sample_clusters_of_selected_views:
                 for i, view in enumerate(pipeline_state.selected_views):
                     render_sample_clusters(
                         self.config.model_file,
@@ -457,12 +482,13 @@ class Pipeline:
                         lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
                         lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
                         lambda sample_view, image: save_transforms_frame(
-                            self.__io.get_output_path(self.__renderer_output_dir),
+                            self.__io.get_output_path(self.__selection_output_dir),
                             sample_view,
                             image,
-                            frame_name=get_frame_name(None, frame_index=i, frame_name="selected_{}.png"),
+                            frame_name=get_frame_name(view, frame_name=f"clusters_{i}_{{}}.png"),
                         ),
                         hard_assignments=self.config.render_sample_clusters_hard_assignment,
+                        render_as_plot=self.config.render_sample_as_plot,
                     )
 
             CONSOLE.log("Selected views:")
@@ -476,11 +502,19 @@ class Pipeline:
 
         return pipeline_state
 
-    def should_run_stage(self, stage: "PipelineStage") -> bool:
+    def should_run_stage(self, stage: PipelineStage) -> bool:
         return self.config.stages is None or stage in self.config.stages
 
-    def should_load_stage(self, stage: "PipelineStage") -> bool:
-        return self.config.stages is None or stage.required_by(self.config.stages)
+    def should_load_stage(self, stage: PipelineStage) -> bool:
+        if self.config.stages is None or stage.required_by(self.config.stages, transitive=False):
+            return True
+
+        for descendant_stage in self.config.stages:
+            if descendant_stage.depends_on(stage, transitive=True):
+                if stage in self.__stage_dependencies[descendant_stage]:
+                    return True
+
+        return False
 
     def __save_transforms(self, state: "PipelineState") -> Path:
         path = save_transforms_json(
@@ -640,67 +674,3 @@ class Pipeline:
         except Exception as ex:
             CONSOLE.log("Failed loading clusters:")
             raise ex
-
-
-class PipelineStage(str, Enum):
-    SAMPLE_VIEWS = "SAMPLE_VIEWS"
-    RENDER_VIEWS = "RENDER_VIEWS"
-    TRAIN_FIELD = "TRAIN_FIELD"
-    SAMPLE_POSITIONS = "SAMPLE_POSITIONS"
-    SAMPLE_EMBEDDINGS = "SAMPLE_EMBEDDINGS"
-    CLUSTER_EMBEDDINGS = "CLUSTER_EMBEDDINGS"
-    SELECT_VIEWS = "SELECT_VIEWS"
-    OUTPUT = "OUTPUT"
-
-    _ignore_ = ["ORDER"]
-    ORDER = {}
-
-    @property
-    def order(self) -> int:
-        return PipelineStage.ORDER[self]
-
-    def depends_on(self, stage: "PipelineStage") -> bool:
-        return self.order > stage.order
-
-    def required_by(self, stages: List["PipelineStage"]) -> bool:
-        for stage in stages:
-            if stage.depends_on(self):
-                return True
-        return False
-
-    def before(self) -> List["PipelineStage"]:
-        return [stage for stage in PipelineStage if stage.order <= self.order]
-
-    def after(self) -> List["PipelineStage"]:
-        return [stage for stage in PipelineStage if stage.order >= self.order]
-
-    @staticmethod
-    def all() -> List["PipelineStage"]:
-        return [s for s in PipelineStage]
-
-    @staticmethod
-    def between(
-        start: Optional["PipelineStage"], end: Optional["PipelineStage"], default: List["PipelineStage"] = []
-    ) -> List["PipelineStage"]:
-        if start is not None and end is not None:
-            return [s for s in start.after() if s in end.before()]
-        elif start is not None:
-            return start.after()
-        elif end is not None:
-            return end.before()
-        return default
-
-
-PipelineStage.ORDER = {
-    PipelineStage.SAMPLE_VIEWS: 1,
-    PipelineStage.RENDER_VIEWS: 2,
-    PipelineStage.TRAIN_FIELD: 3,
-    PipelineStage.SAMPLE_POSITIONS: 4,
-    PipelineStage.SAMPLE_EMBEDDINGS: 5,
-    PipelineStage.CLUSTER_EMBEDDINGS: 6,
-    PipelineStage.SELECT_VIEWS: 7,
-    PipelineStage.OUTPUT: 8,
-}
-
-for stage in PipelineStage:
-    assert stage in PipelineStage.ORDER

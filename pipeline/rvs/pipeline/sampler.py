@@ -11,6 +11,7 @@ from trimesh import triangles
 from trimesh.scene import Scene
 from trimesh.typed import Integer, NDArray, Number, Optional
 
+from rvs.pipeline.pipeline import Normalization
 from rvs.pipeline.state import PipelineState
 from rvs.utils.trimesh import normalize_scene_manual
 
@@ -26,15 +27,12 @@ class PositionSampler:
     def __init__(self, config: PositionSamplerConfig):
         self.config = config
 
-    def sample(self, file: Path, pipeline_state: PipelineState) -> NDArray:
+    def sample(self, file: Path, normalization: Normalization, pipeline_state: PipelineState) -> NDArray:
         pass
 
 
 class BaseTrimeshPositionSampler(PositionSampler):
-    def sample(self, file: Path, pipeline_state: PipelineState) -> NDArray:
-        if pipeline_state.model_normalization is None:
-            raise Exception("Model normalization required")
-
+    def sample(self, file: Path, normalization: Normalization, pipeline_state: PipelineState) -> NDArray:
         obj = trimesh.load(file)
 
         if not isinstance(obj, Scene):
@@ -42,7 +40,7 @@ class BaseTrimeshPositionSampler(PositionSampler):
 
         scene: Scene = obj
 
-        scene = normalize_scene_manual(scene, pipeline_state.model_normalization)
+        scene = normalize_scene_manual(scene, normalization)
 
         tris: NDArray = scene.triangles
 

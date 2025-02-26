@@ -19,7 +19,7 @@ from rvs.evaluation.embedder import Embedder
 from rvs.evaluation.index import load_index
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
-from rvs.pipeline.pipeline import PipelineStage
+from rvs.pipeline.stage import PipelineStage
 from rvs.utils.console import file_link
 from rvs.utils.plot import image_grid_plot, measure_artist, measure_figure, save_figure
 

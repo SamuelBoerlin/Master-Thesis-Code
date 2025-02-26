@@ -18,7 +18,7 @@ from rvs.pipeline.clustering import (
     XMeansClusteringConfig,
 )
 from rvs.pipeline.embedding import ClipAtScaleEmbeddingConfig, DinoEmbeddingConfig
-from rvs.pipeline.pipeline import FieldConfig, PipelineConfig, PipelineStage
+from rvs.pipeline.pipeline import FieldConfig, PipelineConfig
 from rvs.pipeline.renderer import BlenderRendererConfig, PyrenderRendererConfig, TrimeshRendererConfig
 from rvs.pipeline.sampler import (
     BinarySearchDensityTrimeshPositonSamplerConfig,
@@ -26,6 +26,7 @@ from rvs.pipeline.sampler import (
     MinDistanceTrimeshPositionSamplerConfig,
 )
 from rvs.pipeline.selection import MostSimilarToCentroidTrainingViewSelectionConfig
+from rvs.pipeline.stage import PipelineStage
 from rvs.pipeline.views import FermatSpiralViewsConfig, SphereViewsConfig
 from rvs.utils.dataclasses import extend_dataclass_obj
 

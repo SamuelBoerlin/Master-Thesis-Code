@@ -1,8 +1,7 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, List, Optional, Set, Type, TypeVar, Union
+from typing import Callable, List, Optional, Set, Type, TypeVar, Union
 
-if TYPE_CHECKING:
-    from rvs.pipeline.pipeline import PipelineStage
+from rvs.pipeline.stage import PipelineStage
 
 T = TypeVar("T")
 
