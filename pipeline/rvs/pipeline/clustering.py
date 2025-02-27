@@ -1,3 +1,4 @@
+import json
 import shutil
 from dataclasses import dataclass, field
 from typing import Dict, Tuple, Type
@@ -5,6 +6,7 @@ from typing import Dict, Tuple, Type
 import numpy as np
 from git import List, Optional
 from matplotlib import pyplot as plt
+from matplotlib.ticker import MaxNLocator
 from nerfstudio.configs.base_config import InstantiateConfig
 from pyclustering.cluster.center_initializer import kmeans_plusplus_initializer
 from pyclustering.cluster.xmeans import splitting_type, xmeans
@@ -14,6 +16,7 @@ from trimesh.typed import NDArray
 from rvs.pipeline.state import PipelineState
 from rvs.utils.elbow import Elbow, save_elbow
 from rvs.utils.plot import elbow_plot, save_figure
+from rvs.utils.xmeans import CustomXMeans, XMeansCriterion
 
 
 @dataclass
@@ -499,8 +502,14 @@ class ClosestElbowKMeansClustering(ElbowKMeansClustering):
 class XMeansClusteringConfig(RangedKClusteringConfig):
     _target: Type = field(default_factory=lambda: XMeansClustering)
 
+    criterion: XMeansCriterion = XMeansCriterion.BIC
+    """Criterion used for scoring cluster splits and for final selection"""
+
     kmeans_iterations: int = 10
     """Number of K-Means iterations in each Improve-Params step"""
+
+    select_best: bool = True
+    """Whether the best K should be selected given the global score of the criterion"""
 
     whitening: bool = True
     """Whether whitening should be done before K-Means clustering"""
@@ -509,6 +518,7 @@ class XMeansClusteringConfig(RangedKClusteringConfig):
     """Whether cluster centroids should be normalized at the end"""
 
 
+# Pelleg, Dan and Moore, Andrew W. (2000), X-means: Extending K-means with Efficient Estimation of the Number of Clusters.
 class XMeansClustering(Clustering):
     config: XMeansClusteringConfig
 
@@ -519,18 +529,36 @@ class XMeansClustering(Clustering):
 
         initial_centers = kmeans_plusplus_initializer(samples, self.config.min_clusters).initialize()
 
-        xmeans_instance = xmeans(
+        initial_xmeans_instance = CustomXMeans(
             samples.tolist(),
             initial_centers,
             kmax=self.config.max_clusters,
             repeat=self.config.kmeans_iterations,
-            criterion=splitting_type.BAYESIAN_INFORMATION_CRITERION,
+            criterion=self.config.criterion,
             random_state=pipeline_state.pipeline.config.machine.seed,
         )
 
-        xmeans_instance.process()
+        initial_xmeans_instance.process()
 
-        centroids = np.array(xmeans_instance.get_centers())
+        final_xmeans_instance = initial_xmeans_instance
+
+        if self.config.select_best:
+            best_idx = np.argmax(initial_xmeans_instance.global_scores)
+
+            best_k = initial_xmeans_instance.pre_split_clusters[best_idx]
+
+            final_xmeans_instance = CustomXMeans(
+                samples.tolist(),
+                initial_centers,
+                kmax=best_k,
+                repeat=self.config.kmeans_iterations,
+                criterion=self.config.criterion,
+                random_state=pipeline_state.pipeline.config.machine.seed,
+            )
+
+            final_xmeans_instance.process()
+
+        centroids = np.array(final_xmeans_instance.get_centers())
 
         KMeansClustering.kmeans_inplace_unwhitening(centroids, normalization)
 
@@ -538,11 +566,98 @@ class XMeansClustering(Clustering):
             centroids /= np.linalg.norm(centroids, axis=1, keepdims=True)
 
         indices = -np.ones((samples.shape[0],))
-        for cluster_idx, cluster in enumerate(xmeans_instance.get_clusters()):
+        for cluster_idx, cluster in enumerate(final_xmeans_instance.get_clusters()):
             for sample_idx in cluster:
                 indices[sample_idx] = cluster_idx
 
         assert not np.any(indices < 0)
+
+        if pipeline_state.scratch_output_dir is not None:
+            json_file = pipeline_state.scratch_output_dir / "xmeans_iterations.json"
+
+            json_iters_arr = []
+
+            for i, score in enumerate(initial_xmeans_instance.global_scores):
+                json_iter_obj = {
+                    "score": score,
+                    "splits": [],
+                    "pre_clusters": initial_xmeans_instance.pre_split_clusters[i],
+                    "post_clusters": initial_xmeans_instance.post_split_clusters[i],
+                }
+
+                pre_split_scores = initial_xmeans_instance.local_pre_split_scores[i]
+                post_split_scores = initial_xmeans_instance.local_post_split_scores[i]
+
+                json_iter_obj["splits"] = list(
+                    {
+                        "pre_score": pre_split_scores[j],
+                        "post_score": post_split_scores[j],
+                    }
+                    for j in range(len(pre_split_scores))
+                )
+
+                json_iters_arr.append(json_iter_obj)
+
+            with json_file.open("w") as f:
+                json.dump(json_iters_arr, f)
+
+            x = np.arange(len(initial_xmeans_instance.global_scores))
+
+            fig, ax = plt.subplots()
+            ax1 = ax
+
+            ax.set_title("X-Means BIC")
+
+            ax.set_xlabel("Iteration")
+            ax.get_xaxis().set_major_locator(MaxNLocator(nbins="auto", integer=True))
+
+            ax1.plot(x, np.array(initial_xmeans_instance.global_scores), color="blue", label="BIC$_{i}$")
+            ax1.set_ylabel("BIC", color="blue")
+            ax1.get_yaxis().set_tick_params(colors="blue")
+            ax1.legend(loc="center left")
+
+            ax2 = ax.twinx()
+
+            ax2.plot(
+                x, np.array(initial_xmeans_instance.pre_split_clusters), color="red", linestyle="--", label="K$_{i}$"
+            )
+            ax2.set_ylabel("Number of Clusters", color="red")
+            ax2.get_yaxis().set_tick_params(colors="red")
+            ax2.legend(loc="center right")
+
+            xlim1 = ax1.get_xlim()
+            ylim1 = ax1.get_ylim()
+
+            xlim2 = ax2.get_xlim()
+            ylim2 = ax2.get_ylim()
+
+            ax1.vlines(
+                len(final_xmeans_instance.global_scores) - 1,
+                -1000000000,
+                1000000000,
+                color="blue",
+                linestyle=":",
+                alpha=0.5,
+                zorder=0,
+            )
+
+            ax2.hlines(
+                len(centroids),
+                -1000000000,
+                1000000000,
+                color="red",
+                linestyle=":",
+                alpha=0.5,
+                zorder=0,
+            )
+
+            ax1.set_xlim(xlim1)
+            ax1.set_ylim(ylim1)
+
+            ax2.set_xlim(xlim2)
+            ax2.set_ylim(ylim2)
+
+            save_figure(fig, pipeline_state.scratch_output_dir / "xmeans_global_scores.png")
 
         return {"centroids": centroids, "normalization": normalization}, indices
 
