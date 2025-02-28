@@ -23,8 +23,13 @@ class PipelineState:
     sample_embeddings: Optional[NDArray] = None
     sample_embeddings_type: Optional[str] = None
     sample_embeddings_dict: Optional[Dict[str, NDArray]] = None
-    sample_cluster_parameters: Optional[Dict[str, NDArray]] = None
-    sample_cluster_indices: Optional[NDArray[np.intp]] = None
+    transform_parameters: Optional[Dict[str, NDArray]] = None
+    transform_parameters_dict: Optional[Dict[str, Dict[str, NDArray]]] = None
+    transformed_embeddings: Optional[NDArray] = None
+    transformed_embeddings_type: Optional[str] = None
+    transformed_embeddings_dict: Optional[Dict[str, NDArray]] = None
+    cluster_parameters: Optional[Dict[str, NDArray]] = None
+    cluster_indices: Optional[NDArray[np.intp]] = None
     selected_views: Optional[List["View"]] = None
 
     scratch_output_dir: Optional[Path] = None

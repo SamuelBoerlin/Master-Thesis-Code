@@ -19,6 +19,7 @@ from rvs.pipeline.sampler import PositionSampler, PositionSamplerConfig
 from rvs.pipeline.selection import ViewSelection, ViewSelectionConfig
 from rvs.pipeline.stage import PipelineStage, RequirePipelineStage
 from rvs.pipeline.state import PipelineState
+from rvs.pipeline.transform import Transform, TransformConfig
 from rvs.pipeline.views import View, Views, ViewsConfig
 from rvs.utils.console import file_link
 from rvs.utils.debug import render_sample_clusters, render_sample_positions
@@ -50,6 +51,9 @@ class PipelineConfig(ExperimentConfig):
 
     sampler: PositionSamplerConfig = dataclasses.field(default_factory=lambda: PositionSamplerConfig)
     """Configuration for position sampler."""
+
+    transform: TransformConfig = dataclasses.field(default_factory=lambda: TransformConfig)
+    """Configuration for embeddings transform"""
 
     clustering: ClusteringConfig = dataclasses.field(default_factory=lambda: ClusteringConfig)
     """Configuration for embeddings clustering."""
@@ -128,6 +132,7 @@ class Pipeline:
     renderer: Renderer
     field: Field
     sampler: PositionSampler
+    transform: Transform
     clustering: Clustering
     selection: ViewSelection
 
@@ -141,6 +146,7 @@ class Pipeline:
     __sampler_output_dir: Path
     __field_output_dir: Path
     __embedding_output_dir: Path
+    __transform_output_dir: Path
     __clustering_output_dir: Path
     __selection_output_dir: Path
 
@@ -177,6 +183,11 @@ class Pipeline:
         self.__embedding_output_dir = Path("embedding")
         self.__io.mk_output_path(self.__embedding_output_dir)
 
+        self.__transform_output_dir = Path("transform")
+        self.__io.mk_output_path(self.__transform_output_dir)
+
+        self.transform = self.config.transform.setup()
+
         self.__clustering_output_dir = Path("clustering")
         self.__io.mk_output_path(self.__clustering_output_dir)
 
@@ -200,6 +211,7 @@ class Pipeline:
             PipelineStage.TRAIN_FIELD: [self.field],
             PipelineStage.SAMPLE_POSITIONS: [self.sampler],
             PipelineStage.SAMPLE_EMBEDDINGS: [self.field],
+            PipelineStage.TRANSFORM_EMBEDDINGS: [self.transform],
             PipelineStage.CLUSTER_EMBEDDINGS: [self.clustering],
             PipelineStage.SELECT_VIEWS: [self.selection],
             PipelineStage.OUTPUT: [],
@@ -401,12 +413,71 @@ class Pipeline:
 
             assert pipeline_state.sample_embeddings is not None
             assert pipeline_state.sample_embeddings_type is not None
-            assert len(pipeline_state.sample_embeddings_dict) > 0
+            assert pipeline_state.sample_embeddings_dict is not None
+            assert len(pipeline_state.sample_embeddings_dict) == len(self.config.embeddings)
 
             self.__save_sample_embeddings(pipeline_state)
         elif self.should_load_stage(PipelineStage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Loading embeddings...")
             self.__load_sample_embeddings(pipeline_state)
+
+        pipeline_state.scratch_output_dir = None
+
+        if self.should_run_stage(PipelineStage.TRANSFORM_EMBEDDINGS):
+            CONSOLE.log("Transforming embeddings...")
+
+            pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__transform_output_dir / "scratch")
+            pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
+
+            pipeline_state.transform_parameters = None
+            pipeline_state.transform_parameters_dict = dict()
+
+            pipeline_state.transformed_embeddings = None
+            pipeline_state.transformed_embeddings_type = None
+            pipeline_state.transformed_embeddings_dict = dict()
+
+            for i, embedding_config in enumerate(self.config.embeddings):
+                parameters = self.transform.create(
+                    pipeline_state.sample_embeddings_dict[embedding_config.type], pipeline_state
+                )
+                pipeline_state.transform_parameters_dict[embedding_config.type] = {
+                    key: value.copy() for key, value in parameters.items()
+                }
+                for value in pipeline_state.transform_parameters_dict[embedding_config.type].values():
+                    value.setflags(write=False)
+
+                transformed_embeddings = self.transform.apply(
+                    pipeline_state.sample_embeddings_dict[embedding_config.type],
+                    pipeline_state.transform_parameters_dict[embedding_config.type],
+                ).copy()
+                transformed_embeddings.setflags(write=False)
+
+                if i == 0:
+                    pipeline_state.transform_parameters = pipeline_state.transform_parameters_dict[
+                        embedding_config.type
+                    ]
+                    pipeline_state.transformed_embeddings = transformed_embeddings
+                    pipeline_state.transformed_embeddings_type = embedding_config.type
+
+                assert embedding_config.type not in pipeline_state.transformed_embeddings_dict.keys()
+
+                pipeline_state.transformed_embeddings_dict[embedding_config.type] = transformed_embeddings
+
+            assert pipeline_state.transform_parameters is not None
+            assert pipeline_state.transform_parameters_dict is not None
+            assert len(pipeline_state.transform_parameters_dict) == len(self.config.embeddings)
+
+            assert pipeline_state.transformed_embeddings is not None
+            assert pipeline_state.transformed_embeddings_type is not None
+            assert pipeline_state.transformed_embeddings_dict is not None
+            assert len(pipeline_state.transformed_embeddings_dict) == len(self.config.embeddings)
+
+            assert pipeline_state.transformed_embeddings_type == pipeline_state.sample_embeddings_type
+
+            self.__save_embeddings_transform(pipeline_state)
+        elif self.should_load_stage(PipelineStage.TRANSFORM_EMBEDDINGS):
+            CONSOLE.log("Loading embeddings transform...")
+            self.__load_embeddings_transform(pipeline_state)
 
         pipeline_state.scratch_output_dir = None
 
@@ -416,13 +487,13 @@ class Pipeline:
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__clustering_output_dir / "scratch")
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
-            parameters, indices = self.clustering.cluster(pipeline_state.sample_embeddings, pipeline_state)
+            parameters, indices = self.clustering.cluster(pipeline_state.transformed_embeddings, pipeline_state)
 
-            pipeline_state.sample_cluster_parameters = {key: value.copy() for key, value in parameters.items()}
-            for value in pipeline_state.sample_cluster_parameters.values():
+            pipeline_state.cluster_parameters = {key: value.copy() for key, value in parameters.items()}
+            for value in pipeline_state.cluster_parameters.values():
                 value.setflags(write=False)
-            pipeline_state.sample_cluster_indices = indices.astype(np.intp, copy=True)
-            pipeline_state.sample_cluster_indices.setflags(write=False)
+            pipeline_state.cluster_indices = indices.astype(np.intp, copy=True)
+            pipeline_state.cluster_indices.setflags(write=False)
 
             self.__save_clusters(pipeline_state)
 
@@ -433,10 +504,10 @@ class Pipeline:
                         pipeline_state.training_views[view_idx],
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
-                        pipeline_state.sample_embeddings,
-                        self.clustering.get_number_of_clusters(pipeline_state.sample_cluster_parameters),
-                        lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
-                        lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
+                        pipeline_state.transformed_embeddings,
+                        self.clustering.get_number_of_clusters(pipeline_state.cluster_parameters),
+                        lambda xs: self.clustering.hard_classifier(xs, pipeline_state.cluster_parameters),
+                        lambda xs: self.clustering.soft_classifier(xs, pipeline_state.cluster_parameters),
                         lambda sample_view, image: save_transforms_frame(
                             self.__io.get_output_path(self.__clustering_output_dir),
                             sample_view,
@@ -461,9 +532,9 @@ class Pipeline:
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
             views = self.selection.select(
-                self.clustering.get_number_of_clusters(pipeline_state.sample_cluster_parameters),
-                lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
-                lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
+                self.clustering.get_number_of_clusters(pipeline_state.cluster_parameters),
+                lambda xs: self.clustering.hard_classifier(xs, pipeline_state.cluster_parameters),
+                lambda xs: self.clustering.soft_classifier(xs, pipeline_state.cluster_parameters),
                 pipeline_state,
             )
             pipeline_state.selected_views = [View(view.index, view.transform.copy(), view.path) for view in views]
@@ -477,10 +548,10 @@ class Pipeline:
                         view,
                         pipeline_state.model_normalization,
                         pipeline_state.sample_positions,
-                        pipeline_state.sample_embeddings,
-                        self.clustering.get_number_of_clusters(pipeline_state.sample_cluster_parameters),
-                        lambda xs: self.clustering.hard_classifier(xs, pipeline_state.sample_cluster_parameters),
-                        lambda xs: self.clustering.soft_classifier(xs, pipeline_state.sample_cluster_parameters),
+                        pipeline_state.transformed_embeddings,
+                        self.clustering.get_number_of_clusters(pipeline_state.cluster_parameters),
+                        lambda xs: self.clustering.hard_classifier(xs, pipeline_state.cluster_parameters),
+                        lambda xs: self.clustering.soft_classifier(xs, pipeline_state.cluster_parameters),
                         lambda sample_view, image: save_transforms_frame(
                             self.__io.get_output_path(self.__selection_output_dir),
                             sample_view,
@@ -647,13 +718,83 @@ class Pipeline:
             CONSOLE.log("Failed loading embeddings:")
             raise ex
 
+    def __save_embeddings_transform(self, state: "PipelineState") -> Path:
+        self.__save_transformed_embeddings(state)
+
+        path = self.__io.get_output_path(self.__transform_output_dir / "transform.json")
+        with path.open("w") as f:
+            json.dump(
+                {
+                    embedding_type: {
+                        "parameters": {key: value.tolist() for key, value in parameters.items()},
+                    }
+                    for embedding_type, parameters in state.transform_parameters_dict.items()
+                },
+                f,
+            )
+        CONSOLE.log(f"Saved transform to {file_link(path)}")
+
+    def __load_embeddings_transform(self, state: "PipelineState") -> Path:
+        self.__load_transformed_embeddings(state)
+
+        path = self.__io.get_input_path(self.__transform_output_dir / "transform.json")
+        try:
+            with path.open("r") as f:
+                obj: Dict[str, Dict[str, Dict[str, Any]]] = json.load(f)
+                state.transform_parameters_dict = {
+                    embedding_type: {key: np.array(value) for key, value in embedding_obj["parameters"].items()}
+                    for embedding_type, embedding_obj in obj.items()
+                }
+                for parameters_dict in state.transform_parameters_dict.values():
+                    for value in parameters_dict.values():
+                        value.setflags(write=False)
+                state.transform_parameters = state.transform_parameters_dict[state.transformed_embeddings_type]
+            CONSOLE.log(f"Loaded transform from {file_link(path)}")
+            return path
+        except Exception as ex:
+            CONSOLE.log("Failed loading transform:")
+            raise ex
+
+    def __save_transformed_embeddings(self, state: "PipelineState") -> Path:
+        path = self.__io.get_output_path(self.__transform_output_dir / "embeddings.json")
+        with path.open("w") as f:
+            embeddings_list_dict = {
+                type: embeddings.tolist() for type, embeddings in state.transformed_embeddings_dict.items()
+            }
+            obj = {
+                "type": state.transformed_embeddings_type,
+                "dict": embeddings_list_dict,
+            }
+            json.dump(obj, f)
+        CONSOLE.log(f"Saved transformed embeddings to {file_link(path)}")
+
+    def __load_transformed_embeddings(self, state: "PipelineState") -> Path:
+        path = self.__io.get_input_path(self.__transform_output_dir / "embeddings.json")
+        try:
+            with path.open("r") as f:
+                obj = json.load(f)
+                embeddings_list_dict: Dict[str, NDArray] = obj["dict"]
+                state.transformed_embeddings_dict = {
+                    type: np.array(embeddings) for type, embeddings in embeddings_list_dict.items()
+                }
+                for embeddings in state.transformed_embeddings_dict.values():
+                    embeddings.setflags(write=False)
+                state.transformed_embeddings_type = obj["type"]
+                state.transformed_embeddings = state.transformed_embeddings_dict[state.transformed_embeddings_type]
+                state.transformed_embeddings.setflags(write=False)
+            CONSOLE.log(f"Loaded transformed embeddings from {file_link(path)}")
+            return path
+        except Exception as ex:
+            CONSOLE.log("Failed loading transformed embeddings:")
+            raise ex
+
     def __save_clusters(self, state: "PipelineState") -> Path:
         path = self.__io.get_output_path(self.__clustering_output_dir / "clusters.json")
         with path.open("w") as f:
             json.dump(
                 {
-                    "parameters": {key: value.tolist() for key, value in state.sample_cluster_parameters.items()},
-                    "indices": state.sample_cluster_indices.tolist(),
+                    "parameters": {key: value.tolist() for key, value in state.cluster_parameters.items()},
+                    "indices": state.cluster_indices.tolist(),
                 },
                 f,
             )
@@ -665,11 +806,11 @@ class Pipeline:
             with path.open("r") as f:
                 json_obj = json.load(f)
                 parameters_dict: Dict[str, List] = json_obj["parameters"]
-                state.sample_cluster_parameters = {key: np.array(value) for key, value in parameters_dict.items()}
-                for value in state.sample_cluster_parameters.values():
+                state.cluster_parameters = {key: np.array(value) for key, value in parameters_dict.items()}
+                for value in state.cluster_parameters.values():
                     value.setflags(write=False)
-                state.sample_cluster_indices = np.array(json_obj["indices"], dtype=np.intp)
-                state.sample_cluster_indices.setflags(write=False)
+                state.cluster_indices = np.array(json_obj["indices"], dtype=np.intp)
+                state.cluster_indices.setflags(write=False)
             CONSOLE.log(f"Loaded clusters from {file_link(path)}")
             return path
         except Exception as ex:

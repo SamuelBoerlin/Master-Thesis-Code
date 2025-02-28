@@ -9,7 +9,6 @@ from matplotlib import pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from nerfstudio.configs.base_config import InstantiateConfig
 from pyclustering.cluster.center_initializer import kmeans_plusplus_initializer
-from pyclustering.cluster.xmeans import splitting_type, xmeans
 from scipy.cluster.vq import kmeans, vq
 from trimesh.typed import NDArray
 

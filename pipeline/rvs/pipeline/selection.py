@@ -52,7 +52,11 @@ class MostSimilarToCentroidTrainingViewSelection(ViewSelection, RequirePipelineS
 
     def __init__(self, config: MostSimilarToCentroidTrainingViewSelectionConfig) -> None:
         super().__init__(config)
-        self.required_stages = {PipelineStage.SAMPLE_VIEWS, PipelineStage.TRAIN_FIELD}
+        self.required_stages = {
+            PipelineStage.SAMPLE_VIEWS,
+            PipelineStage.TRANSFORM_EMBEDDINGS,
+            PipelineStage.TRAIN_FIELD,
+        }
 
     def select(
         self,
@@ -61,10 +65,10 @@ class MostSimilarToCentroidTrainingViewSelection(ViewSelection, RequirePipelineS
         soft_classifier: Callable[[NDArray], NDArray],
         pipeline_state: PipelineState,
     ) -> List[View]:
-        if "centroids" not in pipeline_state.sample_cluster_parameters:
+        if "centroids" not in pipeline_state.cluster_parameters:
             raise ValueError("Cluster centroids required")
 
-        centroids = pipeline_state.sample_cluster_parameters["centroids"]
+        centroids = pipeline_state.cluster_parameters["centroids"]
 
         num_clusters = centroids.shape[0]
         if num_clusters <= 0:
@@ -76,7 +80,7 @@ class MostSimilarToCentroidTrainingViewSelection(ViewSelection, RequirePipelineS
         lerf_model: LERFModel = pipeline_state.pipeline.field.trainer.pipeline.model
         lerf_datamanager: DataManager = pipeline_state.pipeline.field.trainer.pipeline.datamanager
 
-        image_embeddings = []
+        image_embeddings: List[NDArray] = []
 
         for i in range(len(lerf_datamanager.train_dataset)):
             image: Tensor = lerf_datamanager.train_dataset[i]["image"]
@@ -91,15 +95,23 @@ class MostSimilarToCentroidTrainingViewSelection(ViewSelection, RequirePipelineS
 
             image_embeddings.append(embedding)
 
+        transformed_embeddings: NDArray = pipeline_state.pipeline.transform.apply(
+            np.array(image_embeddings), pipeline_state.transform_parameters
+        )
+
+        assert transformed_embeddings.shape[0] == len(lerf_datamanager.train_dataset)
+        assert transformed_embeddings.shape[1] == centroids.shape[1]
+
         best_sim = [-1] * num_clusters
         best_idx = [0] * num_clusters
 
-        for i in range(len(image_embeddings)):
-            image_embedding = image_embeddings[i]
+        for i in range(transformed_embeddings.shape[0]):
             image_idx = lerf_datamanager.train_dataset[i]["image_idx"]
 
+            embedding = transformed_embeddings[i]
+
             for j in range(num_clusters):
-                sim = np.dot(centroids[j], image_embedding)
+                sim = np.dot(centroids[j], embedding)
 
                 if sim > best_sim[j]:
                     best_sim[j] = sim

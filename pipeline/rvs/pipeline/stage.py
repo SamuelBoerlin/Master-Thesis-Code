@@ -9,6 +9,7 @@ class PipelineStage(str, Enum):
     TRAIN_FIELD = "TRAIN_FIELD"
     SAMPLE_POSITIONS = "SAMPLE_POSITIONS"
     SAMPLE_EMBEDDINGS = "SAMPLE_EMBEDDINGS"
+    TRANSFORM_EMBEDDINGS = "TRANSFORM_EMBEDDINGS"
     CLUSTER_EMBEDDINGS = "CLUSTER_EMBEDDINGS"
     SELECT_VIEWS = "SELECT_VIEWS"
     OUTPUT = "OUTPUT"
@@ -65,9 +66,10 @@ PipelineStage.ORDER = {
     PipelineStage.TRAIN_FIELD: 3,
     PipelineStage.SAMPLE_POSITIONS: 4,
     PipelineStage.SAMPLE_EMBEDDINGS: 5,
-    PipelineStage.CLUSTER_EMBEDDINGS: 6,
-    PipelineStage.SELECT_VIEWS: 7,
-    PipelineStage.OUTPUT: 8,
+    PipelineStage.TRANSFORM_EMBEDDINGS: 6,
+    PipelineStage.CLUSTER_EMBEDDINGS: 7,
+    PipelineStage.SELECT_VIEWS: 8,
+    PipelineStage.OUTPUT: 9,
 }
 
 PipelineStage.DEPENDENCIES = {
@@ -80,7 +82,8 @@ PipelineStage.DEPENDENCIES = {
         PipelineStage.SAMPLE_POSITIONS,
         PipelineStage.TRAIN_FIELD,
     },
-    PipelineStage.CLUSTER_EMBEDDINGS: {PipelineStage.SAMPLE_EMBEDDINGS},
+    PipelineStage.TRANSFORM_EMBEDDINGS: {PipelineStage.SAMPLE_EMBEDDINGS},
+    PipelineStage.CLUSTER_EMBEDDINGS: {PipelineStage.TRANSFORM_EMBEDDINGS},
     PipelineStage.SELECT_VIEWS: {PipelineStage.CLUSTER_EMBEDDINGS},
     PipelineStage.OUTPUT: {PipelineStage.SELECT_VIEWS},
 }

@@ -27,6 +27,7 @@ from rvs.pipeline.sampler import (
 )
 from rvs.pipeline.selection import MostSimilarToCentroidTrainingViewSelectionConfig
 from rvs.pipeline.stage import PipelineStage
+from rvs.pipeline.transform import IdentityTransformConfig
 from rvs.pipeline.views import FermatSpiralViewsConfig, SphereViewsConfig
 from rvs.utils.dataclasses import extend_dataclass_obj
 
@@ -105,6 +106,12 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
             FarthestPointSamplingDensityTrimeshPositonSamplerConfig(),
         ),
     },
+    PipelineStage.TRANSFORM_EMBEDDINGS: {
+        "identity_transform": (
+            "Identity transform, i.e. embeddings are not changed at all",
+            IdentityTransformConfig(),
+        )
+    },
     PipelineStage.CLUSTER_EMBEDDINGS: {
         "kmeans_clustering": ("Fixed-k KMeans clustering", KMeansClusteringConfig()),
         "frac_elbow_kmeans_clustering": (
@@ -141,47 +148,53 @@ for views_method, (views_description, views_config) in pipeline_components[Pipel
                 for sampler_method, (sampler_description, sampler_config) in pipeline_components[
                     PipelineStage.SAMPLE_POSITIONS
                 ].items():
-                    for clustering_method, (clustering_description, clustering_config) in pipeline_components[
-                        PipelineStage.CLUSTER_EMBEDDINGS
+                    for transform_method, (transform_description, transform_config) in pipeline_components[
+                        PipelineStage.TRANSFORM_EMBEDDINGS
                     ].items():
-                        for selection_method, (selection_description, selection_config) in pipeline_components[
-                            PipelineStage.SELECT_VIEWS
+                        for clustering_method, (clustering_description, clustering_config) in pipeline_components[
+                            PipelineStage.CLUSTER_EMBEDDINGS
                         ].items():
-                            method = ".".join(
-                                [
-                                    views_method,
-                                    renderer_method,
-                                    embeddings_method,
-                                    field_method,
-                                    sampler_method,
-                                    clustering_method,
-                                    selection_method,
-                                ]
-                            )
+                            for selection_method, (selection_description, selection_config) in pipeline_components[
+                                PipelineStage.SELECT_VIEWS
+                            ].items():
+                                method = ".".join(
+                                    [
+                                        views_method,
+                                        renderer_method,
+                                        embeddings_method,
+                                        field_method,
+                                        sampler_method,
+                                        transform_method,
+                                        clustering_method,
+                                        selection_method,
+                                    ]
+                                )
 
-                            description = (
-                                f"1. {views_description}\n"
-                                f"2. {renderer_description}\n"
-                                f"3. {embeddings_description}\n"
-                                f"4. {field_description}\n"
-                                f"5. {sampler_description}\n"
-                                f"6. {clustering_description}\n"
-                                f"7. {selection_description}\n"
-                            )
+                                description = (
+                                    f"1. {views_description}\n"
+                                    f"2. {renderer_description}\n"
+                                    f"3. {embeddings_description}\n"
+                                    f"4. {field_description}\n"
+                                    f"5. {sampler_description}\n"
+                                    f"6. {transform_description}\n"
+                                    f"7. {clustering_description}\n"
+                                    f"8. {selection_description}\n"
+                                )
 
-                            config = PipelineConfig(
-                                method_name=method,
-                                views=views_config,
-                                renderer=renderer_config,
-                                embeddings=embeddings_configs,
-                                field=field_config,
-                                sampler=sampler_config,
-                                clustering=clustering_config,
-                                selection=selection_config,
-                            )
+                                config = PipelineConfig(
+                                    method_name=method,
+                                    views=views_config,
+                                    renderer=renderer_config,
+                                    embeddings=embeddings_configs,
+                                    field=field_config,
+                                    sampler=sampler_config,
+                                    transform=transform_config,
+                                    clustering=clustering_config,
+                                    selection=selection_config,
+                                )
 
-                            pipeline_configs[method] = config
-                            pipeline_descriptions[method] = description
+                                pipeline_configs[method] = config
+                                pipeline_descriptions[method] = description
 
 AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[
     tyro.conf.FlagConversionOff[
