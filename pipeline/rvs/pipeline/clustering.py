@@ -766,12 +766,16 @@ class XMeansClustering(Clustering):
         assert max_k >= 0
 
         x: NDArray = np.array(list(range(min_k, max_k + 1)))
-        y = np.zeros((x.shape[0],))
+
+        y = np.ones((x.shape[0],)) * np.nan
         for i, centers in enumerate(xmeans_data.clusters_centers):
             k = len(centers)
-            i = k - min_k
-            if i < y.shape[0]:
-                y[i] = xmeans_data.clusters_global_scores[i]
+            yi = k - min_k
+            if yi < y.shape[0]:
+                y[yi] = xmeans_data.clusters_global_scores[i]
+        y_indices = np.nonzero(np.isfinite(y))[0]
+        y_values = y[y_indices]
+        y = np.interp(np.arange(y.shape[0]), y_indices, y_values)
 
         x_solution = len(xmeans_solution.centers)
         y_solution = xmeans_solution.score
