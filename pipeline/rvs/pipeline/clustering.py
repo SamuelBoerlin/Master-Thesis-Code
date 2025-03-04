@@ -1,6 +1,6 @@
-import json
 import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Tuple, Type
 
 import numpy as np
@@ -15,7 +15,14 @@ from trimesh.typed import NDArray
 from rvs.pipeline.state import PipelineState
 from rvs.utils.elbow import Elbow, save_elbow
 from rvs.utils.plot import elbow_plot, save_figure
-from rvs.utils.xmeans import CustomXMeans, XMeansCriterion
+from rvs.utils.xmeans import (
+    CustomXMeans,
+    CustomXMeansData,
+    CustomXMeansSolution,
+    XMeansCriterion,
+    save_xmeans_data,
+    save_xmeans_solution,
+)
 
 
 @dataclass
@@ -507,8 +514,17 @@ class XMeansClusteringConfig(RangedKClusteringConfig):
     kmeans_iterations: int = 10
     """Number of K-Means iterations in each Improve-Params step"""
 
-    select_best: bool = True
-    """Whether the best K should be selected given the global score of the criterion"""
+    select_k_by_best_score: bool = False
+    """Whether the best K should be selected given the global score of the criterion (implies evaluate_iterations=True)"""
+
+    rerun_with_selected_k: bool = False
+    """Whether to rerun the clustering with the selected K as maximum K"""
+
+    evaluate_iterations: bool = False
+    """Whether the global score should be evaluated for each iteration"""
+
+    evaluate_clusters: bool = False
+    """Whether the global score should be evaluated for all tried cluster configurations, making select_k_by_best_score more fine-grained"""
 
     whitening: bool = True
     """Whether whitening should be done before K-Means clustering"""
@@ -528,137 +544,269 @@ class XMeansClustering(Clustering):
 
         initial_centers = kmeans_plusplus_initializer(samples, self.config.min_clusters).initialize()
 
-        initial_xmeans_instance = CustomXMeans(
+        xmeans_instance = CustomXMeans(
             samples.tolist(),
             initial_centers,
             kmax=self.config.max_clusters,
             repeat=self.config.kmeans_iterations,
             criterion=self.config.criterion,
             random_state=pipeline_state.pipeline.config.machine.seed,
+            evaluate_iterations=self.config.evaluate_iterations or self.config.select_k_by_best_score,
+            evaluate_clusters=self.config.evaluate_clusters,
         )
 
-        initial_xmeans_instance.process()
+        xmeans_instance.process()
 
-        final_xmeans_instance = initial_xmeans_instance
+        xmeans_data = xmeans_instance.data
 
-        if self.config.select_best:
-            best_idx = np.argmax(initial_xmeans_instance.global_scores)
+        xmeans_solution = xmeans_instance.solution
 
-            best_k = initial_xmeans_instance.pre_split_clusters[best_idx]
+        if self.config.select_k_by_best_score:
+            assert len(xmeans_data.clusters_global_scores) > 0
 
-            final_xmeans_instance = CustomXMeans(
-                samples.tolist(),
-                initial_centers,
-                kmax=best_k,
-                repeat=self.config.kmeans_iterations,
-                criterion=self.config.criterion,
-                random_state=pipeline_state.pipeline.config.machine.seed,
-            )
+            best_idx = -1
 
-            final_xmeans_instance.process()
+            if self.config.criterion == XMeansCriterion.BIC:
+                best_idx = np.argmax(xmeans_data.clusters_global_scores)
+            elif self.config.criterion == XMeansCriterion.MNDL:
+                best_idx = np.argmin(xmeans_data.clusters_global_scores)
 
-        centroids = np.array(final_xmeans_instance.get_centers())
+            assert best_idx >= 0
+
+            if self.config.rerun_with_selected_k:
+                best_k = len(xmeans_data.clusters_centers[best_idx])
+
+                rerun_xmeans_instance = CustomXMeans(
+                    samples.tolist(),
+                    initial_centers,
+                    kmax=best_k,
+                    repeat=self.config.kmeans_iterations,
+                    criterion=self.config.criterion,
+                    random_state=pipeline_state.pipeline.config.machine.seed,
+                    evaluate_clusters=False,
+                    evaluate_iterations=False,
+                )
+
+                rerun_xmeans_instance.process()
+
+                xmeans_solution = rerun_xmeans_instance.solution
+            else:
+                xmeans_solution = CustomXMeansSolution(
+                    indices=xmeans_data.clusters_indices[best_idx],
+                    centers=xmeans_data.clusters_centers[best_idx],
+                    score=xmeans_data.clusters_global_scores[best_idx],
+                )
+
+        centroids = np.array(xmeans_solution.centers)
 
         KMeansClustering.kmeans_inplace_unwhitening(centroids, normalization)
 
         if self.config.normalize:
             centroids /= np.linalg.norm(centroids, axis=1, keepdims=True)
 
-        indices = -np.ones((samples.shape[0],))
-        for cluster_idx, cluster in enumerate(final_xmeans_instance.get_clusters()):
+        indices = np.zeros((samples.shape[0],), dtype=np.intp)
+        for cluster_idx, cluster in enumerate(xmeans_solution.indices):
+            assert cluster_idx >= 0
             for sample_idx in cluster:
-                indices[sample_idx] = cluster_idx
+                assert sample_idx >= 0
+                indices[sample_idx] = int(cluster_idx) + 1
 
-        assert not np.any(indices < 0)
+        assert not np.any(indices <= 0)
+
+        indices -= 1
+
+        assert np.any(indices == 0)
 
         if pipeline_state.scratch_output_dir is not None:
-            json_file = pipeline_state.scratch_output_dir / "xmeans_iterations.json"
+            save_xmeans_data(pipeline_state.scratch_output_dir / "xmeans_data.json", xmeans_data)
 
-            json_iters_arr = []
+            save_xmeans_solution(pipeline_state.scratch_output_dir / "xmeans_solution.json", xmeans_solution)
 
-            for i, score in enumerate(initial_xmeans_instance.global_scores):
-                json_iter_obj = {
-                    "score": score,
-                    "splits": [],
-                    "pre_clusters": initial_xmeans_instance.pre_split_clusters[i],
-                    "post_clusters": initial_xmeans_instance.post_split_clusters[i],
-                }
-
-                pre_split_scores = initial_xmeans_instance.local_pre_split_scores[i]
-                post_split_scores = initial_xmeans_instance.local_post_split_scores[i]
-
-                json_iter_obj["splits"] = list(
-                    {
-                        "pre_score": pre_split_scores[j],
-                        "post_score": post_split_scores[j],
-                    }
-                    for j in range(len(pre_split_scores))
-                )
-
-                json_iters_arr.append(json_iter_obj)
-
-            with json_file.open("w") as f:
-                json.dump(json_iters_arr, f)
-
-            x = np.arange(len(initial_xmeans_instance.global_scores))
-
-            fig, ax = plt.subplots()
-            ax1 = ax
-
-            ax.set_title("X-Means BIC")
-
-            ax.set_xlabel("Iteration")
-            ax.get_xaxis().set_major_locator(MaxNLocator(nbins="auto", integer=True))
-
-            ax1.plot(x, np.array(initial_xmeans_instance.global_scores), color="blue", label="BIC$_{i}$")
-            ax1.set_ylabel("BIC", color="blue")
-            ax1.get_yaxis().set_tick_params(colors="blue")
-            ax1.legend(loc="center left")
-
-            ax2 = ax.twinx()
-
-            ax2.plot(
-                x, np.array(initial_xmeans_instance.pre_split_clusters), color="red", linestyle="--", label="K$_{i}$"
-            )
-            ax2.set_ylabel("Number of Clusters", color="red")
-            ax2.get_yaxis().set_tick_params(colors="red")
-            ax2.legend(loc="center right")
-
-            xlim1 = ax1.get_xlim()
-            ylim1 = ax1.get_ylim()
-
-            xlim2 = ax2.get_xlim()
-            ylim2 = ax2.get_ylim()
-
-            ax1.vlines(
-                len(final_xmeans_instance.global_scores) - 1,
-                -1000000000,
-                1000000000,
-                color="blue",
-                linestyle=":",
-                alpha=0.5,
-                zorder=0,
+            self.__save_xmeans_iterations_global_scores_plot(
+                xmeans_data, xmeans_solution, pipeline_state.scratch_output_dir / "xmeans_iterations_global_scores.png"
             )
 
-            ax2.hlines(
-                len(centroids),
-                -1000000000,
-                1000000000,
-                color="red",
-                linestyle=":",
-                alpha=0.5,
-                zorder=0,
+            self.__save_xmeans_clusters_global_scores_plot(
+                xmeans_data, xmeans_solution, pipeline_state.scratch_output_dir / "xmeans_clusters_global_scores.png"
             )
-
-            ax1.set_xlim(xlim1)
-            ax1.set_ylim(ylim1)
-
-            ax2.set_xlim(xlim2)
-            ax2.set_ylim(ylim2)
-
-            save_figure(fig, pipeline_state.scratch_output_dir / "xmeans_global_scores.png")
 
         return {"centroids": centroids, "normalization": normalization}, indices
+
+    def __save_xmeans_iterations_global_scores_plot(
+        self, xmeans_data: CustomXMeansData, xmeans_solution: CustomXMeansSolution, file: Path
+    ):
+        solution_k = len(xmeans_solution.centers)
+
+        solution_iteration: Optional[int] = None
+        for i, it in enumerate(xmeans_data.clusters_iterations):
+            if len(xmeans_data.clusters_centers[i]) == solution_k:
+                solution_iteration = it
+
+        x = np.arange(len(xmeans_data.iterations_global_scores), dtype=np.float32)
+
+        x_frac_solution_iteration: Optional[float] = None
+        if solution_iteration is not None and solution_iteration < len(xmeans_data.iterations_pre_split_clusters) - 1:
+            min_k = xmeans_data.iterations_pre_split_clusters[solution_iteration]
+            max_k = xmeans_data.iterations_pre_split_clusters[solution_iteration + 1]
+
+            assert min_k <= solution_k
+            assert max_k >= solution_k
+
+            if min_k == max_k:
+                x_frac_solution_iteration = solution_iteration
+            else:
+                x_frac_solution_iteration = solution_iteration + (solution_k - min_k) / (max_k - min_k)
+
+            assert x_frac_solution_iteration >= 0.0
+
+        y_global_scores = np.array(xmeans_data.iterations_global_scores)
+        y_num_clusters = np.array(xmeans_data.iterations_pre_split_clusters)
+
+        y_solution_global_score: Optional[float] = None
+        y_solution_num_clusters: Optional[float] = None
+
+        if x_frac_solution_iteration is not None:
+            ins_idx = np.argmax(x == solution_iteration) + 1
+
+            if ins_idx < x.shape[0]:
+                x = np.insert(x, ins_idx, x_frac_solution_iteration)
+
+                y_solution_global_score = xmeans_solution.score
+                y_solution_num_clusters = len(xmeans_solution.centers)
+
+                y_global_scores = np.insert(y_global_scores, ins_idx, y_solution_global_score)
+                y_num_clusters = np.insert(y_num_clusters, ins_idx, y_solution_num_clusters)
+
+        fig, ax = plt.subplots()
+        ax1 = ax
+
+        ax.set_title("X-Means BIC")
+
+        ax.set_xlabel("Iteration")
+        ax.get_xaxis().set_major_locator(MaxNLocator(nbins="auto", integer=True))
+
+        ax1.plot(x, y_global_scores, color="C0", label="BIC$_{i}$")
+
+        if x_frac_solution_iteration is not None and y_solution_global_score is not None:
+            ax1.plot(x_frac_solution_iteration, y_solution_global_score, "o", color="C0", fillstyle="full")
+
+        ax1.set_ylabel("BIC", color="C0")
+        ax1.get_yaxis().set_tick_params(colors="C0")
+        ax1.legend(loc="center left")
+
+        ax2 = ax.twinx()
+
+        ax2.plot(
+            x,
+            y_num_clusters,
+            color="C1",
+            linestyle="--",
+            label="K$_{i}$",
+        )
+
+        if x_frac_solution_iteration is not None and y_solution_num_clusters is not None:
+            ax2.plot(x_frac_solution_iteration, y_solution_num_clusters, "o", color="C1", fillstyle="full")
+
+        ax2.set_ylabel("Number of Clusters", color="C1")
+        ax2.get_yaxis().set_tick_params(colors="C1")
+        ax2.legend(loc="center right")
+
+        xlim1 = ax1.get_xlim()
+        ylim1 = ax1.get_ylim()
+
+        xlim2 = ax2.get_xlim()
+        ylim2 = ax2.get_ylim()
+
+        if y_solution_global_score is not None:
+            ax1.hlines(
+                y_solution_global_score,
+                -1000000000,
+                x_frac_solution_iteration,
+                color="gray",
+                linestyle=":",
+                alpha=0.5,
+                zorder=0,
+            )
+
+        if y_solution_num_clusters is not None:
+            ax2.hlines(
+                y_solution_num_clusters,
+                x_frac_solution_iteration,
+                1000000000,
+                color="gray",
+                linestyle=":",
+                alpha=0.5,
+                zorder=0,
+            )
+
+        ax1.set_xlim(xlim1)
+        ax1.set_ylim(ylim1)
+
+        ax2.set_xlim(xlim2)
+        ax2.set_ylim(ylim2)
+
+        save_figure(fig, file)
+
+    def __save_xmeans_clusters_global_scores_plot(
+        self, xmeans_data: CustomXMeansData, xmeans_solution: CustomXMeansSolution, file: Path
+    ):
+        min_k = 100000
+        max_k = -1
+
+        if len(xmeans_data.clusters_centers) > 0:
+            for centers in xmeans_data.clusters_centers:
+                k = len(centers)
+                min_k = min(min_k, k)
+                max_k = max(max_k, k)
+        else:
+            min_k = 0
+            max_k = 0
+
+        assert min_k < 100000
+        assert max_k >= 0
+
+        x: NDArray = np.array(list(range(min_k, max_k + 1)))
+        y = np.zeros((x.shape[0],))
+        for i, centers in enumerate(xmeans_data.clusters_centers):
+            k = len(centers)
+            i = k - min_k
+            if i < y.shape[0]:
+                y[i] = xmeans_data.clusters_global_scores[i]
+
+        x_solution = len(xmeans_solution.centers)
+        y_solution = xmeans_solution.score
+
+        fig, ax = plt.subplots()
+
+        ax.set_title("X-Means BIC")
+
+        ax.plot(x, y, color="C0")
+
+        ax.plot(x_solution, y_solution, "o", color="C0", fillstyle="full")
+
+        ax.set_xlabel("Number of Clusters")
+        ax.get_xaxis().set_major_locator(MaxNLocator(nbins="auto", integer=True))
+
+        ax.set_ylabel("BIC")
+
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+
+        if x_solution is not None and y_solution is not None:
+            ax.hlines(
+                y_solution,
+                -1000000000,
+                x_solution,
+                color="gray",
+                linestyle=":",
+                alpha=0.5,
+                zorder=0,
+            )
+
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+        save_figure(fig, file)
 
     def get_number_of_clusters(self, parameters: Dict[str, NDArray]) -> int:
         if "centroids" not in parameters:

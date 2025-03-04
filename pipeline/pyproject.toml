@@ -10,7 +10,7 @@ dependencies=[
     "objaverse @ file:///home/ubuntu/repo/objaverse-dl",
     "gitpython",
     "fake-bpy-module",
-    "pyclustering",
+    "pyclustering==0.10.1.2",
 ]
 
 [tool.setuptools.packages.find]

@@ -401,16 +401,16 @@ def elbow_plot(
 
     for e in elbow:
         if pred_frac_hlines[i]:
-            ax.hlines(e.pred_frac_k_d, -1000, e.pred_frac_k, color="gray", linestyle="--", alpha=0.5, zorder=0)
+            ax.hlines(e.pred_frac_k_d, -1000, e.pred_frac_k, color="gray", linestyle=":", alpha=0.5, zorder=0)
 
         if pred_hlines[i]:
-            ax.hlines(e.pred_k_d, -1000, e.pred_k, color="gray", linestyle="--", alpha=0.5, zorder=0)
+            ax.hlines(e.pred_k_d, -1000, e.pred_k, color="gray", linestyle=":", alpha=0.5, zorder=0)
 
         if pred_frac_vlines[i]:
-            ax.vlines(e.pred_frac_k, -1000, e.pred_frac_k_d, color="gray", linestyle="--", alpha=0.5, zorder=0)
+            ax.vlines(e.pred_frac_k, -1000, e.pred_frac_k_d, color="gray", linestyle=":", alpha=0.5, zorder=0)
 
         if pred_vlines[i]:
-            ax.vlines(e.pred_k, -1000, e.pred_k_d, color="gray", linestyle="--", alpha=0.5, zorder=0)
+            ax.vlines(e.pred_k, -1000, e.pred_k_d, color="gray", linestyle=":", alpha=0.5, zorder=0)
 
     if xlabel is not None:
         ax.set_xlabel(xlabel)
