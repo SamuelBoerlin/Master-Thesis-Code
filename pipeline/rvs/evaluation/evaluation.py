@@ -171,7 +171,7 @@ class Evaluation:
     runs_dir: Path
     """Output directory for eval configs and logs"""
 
-    embedder: CachedEmbedder
+    embedder: Optional[CachedEmbedder] = None
 
     input_pipelines: Optional[List[PipelineEvaluationInstance]]
 
@@ -213,14 +213,19 @@ class Evaluation:
         CONSOLE.log("Setting up inputs...")
         self.input_pipelines = self.__setup_inputs()
 
-        CONSOLE.log("Setting up embedder...")
-        self.embedder = CachedEmbedder(
-            self.config.embedder.setup(),
-            self.config.embedder_cache_dir,
-            validate_hash=self.config.embedder_cache_validation,
-            image_cache_required=self.config.embedder_image_cache_required,
-            text_cache_required=self.config.embedder_text_cache_required,
-        )
+        if self.config.runtime.partial_results or PipelineStage.OUTPUT in PipelineStage.between(
+            self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
+        ):
+            CONSOLE.log("Setting up embedder...")
+            self.embedder = CachedEmbedder(
+                self.config.embedder.setup(),
+                self.config.embedder_cache_dir,
+                validate_hash=self.config.embedder_cache_validation,
+                image_cache_required=self.config.embedder_image_cache_required,
+                text_cache_required=self.config.embedder_text_cache_required,
+            )
+        else:
+            CONSOLE.log("Setting up embedder skipped...")
 
         CONSOLE.log("Setting up dataset...")
 
@@ -392,7 +397,7 @@ class Evaluation:
                 else:
                     aborted = not self.__run_object_by_object(run)
 
-            if not aborted or self.config.runtime.partial_results:
+            if (not aborted or self.config.runtime.partial_results) and self.embedder is not None:
                 evaluate_results(
                     self.lvis,
                     self.embedder,
