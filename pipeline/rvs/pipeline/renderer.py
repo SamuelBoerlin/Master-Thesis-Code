@@ -414,14 +414,26 @@ class BlenderRenderer(Renderer):
 
         return (translation, euler_angles)
 
-    def create_normalization_file_auto(self, model_file: Path, dir: Path, gpu: int = 0) -> Path:
+    def create_normalization_file_auto(
+        self, model_file: Path, dir: Path, gpu: int = 0, disable_stdout: bool = True, disable_stderr=True
+    ) -> Path:
         normalization_file = dir / "normalization.json"
 
         try:
             with ProcessResult() as result:
                 process = Process(
                     target=renderer_worker_func,
-                    args=(self.config.blender_binary, model_file, [], normalization_file, True, gpu, result),
+                    args=(
+                        self.config.blender_binary,
+                        model_file,
+                        [],
+                        normalization_file,
+                        True,
+                        gpu,
+                        result,
+                        disable_stdout,
+                        disable_stderr,
+                    ),
                     daemon=True,
                 )
 
@@ -484,7 +496,14 @@ class BlenderRenderer(Renderer):
         )
 
     def run_renders(
-        self, model_file: Path, render_files: List[Path], normalization_file: Path, processes: int = 4, gpu: int = 0
+        self,
+        model_file: Path,
+        render_files: List[Path],
+        normalization_file: Path,
+        processes: int = 4,
+        gpu: int = 0,
+        disable_stdout: bool = True,
+        disable_stderr=True,
     ) -> None:
         if processes < 1:
             raise ValueError(f"processes ({processes}) < 1")
@@ -503,7 +522,17 @@ class BlenderRenderer(Renderer):
 
                     process = Process(
                         target=renderer_worker_func,
-                        args=(self.config.blender_binary, model_file, chunk, normalization_file, False, gpu, result),
+                        args=(
+                            self.config.blender_binary,
+                            model_file,
+                            chunk,
+                            normalization_file,
+                            False,
+                            gpu,
+                            result,
+                            disable_stdout,
+                            disable_stderr,
+                        ),
                         daemon=True,
                     )
 

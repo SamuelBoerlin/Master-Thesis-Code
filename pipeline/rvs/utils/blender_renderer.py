@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -42,8 +43,16 @@ def renderer_worker_func(
     save_normalization: bool = False,
     gpu: int = 0,
     result: Optional[ProcessResult] = None,
+    disable_stdout: bool = True,
+    disable_stderr: bool = True,
 ) -> None:
     try:
+        if disable_stdout:
+            sys.stdout = open(os.devnull, "w")
+
+        if disable_stderr:
+            sys.stderr = open(os.devnull, "w")
+
         script_file = Path(__file__).resolve().parent / (Path(__file__).stem + ".py")
 
         if not script_file.exists():
@@ -73,7 +82,13 @@ def renderer_worker_func(
         if save_normalization:
             command += " --save_normalization"
 
-        subprocess.run(command, shell=True, check=True)
+        subprocess.run(
+            command,
+            shell=True,
+            check=True,
+            stdout=open(os.devnull, "w") if disable_stdout else None,
+            stderr=open(os.devnull, "w") if disable_stderr else None,
+        )
 
         if result is not None:
             result.success = True

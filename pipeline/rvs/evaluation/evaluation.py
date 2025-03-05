@@ -1,9 +1,13 @@
 import json
+import threading
 import traceback
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
+from threading import Semaphore
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, TypeVar, Union
 
 import yaml
@@ -16,7 +20,7 @@ from torch.multiprocessing import Process
 from rvs.evaluation.embedder import CachedEmbedder, EmbedderConfig
 from rvs.evaluation.evaluation_method import evaluate_results
 from rvs.evaluation.index import load_index
-from rvs.evaluation.lvis import LVISDataset
+from rvs.evaluation.lvis import LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.worker import pipeline_worker_func
 from rvs.pipeline.pipeline import PipelineConfig
@@ -59,6 +63,9 @@ class RuntimeSettings(PrintableConfig):
 
     set_read_only: Optional[bool] = None
     """Sets the data to be read-only and exists immediately after if flag set"""
+
+    threads: int = 1
+    """Number of threads for running the pipelines or pipeline stages"""
 
 
 @dataclass
@@ -114,10 +121,28 @@ class EvaluationConfig(InstantiateConfig):
     """Runtime settings that do not affect the results"""
 
 
+class ConsoleLogger:
+    __semaphore: Semaphore
+
+    def __init__(self) -> None:
+        self.__semaphore = Semaphore()
+
+    def log(self, text: str) -> None:
+        self.__semaphore.acquire()
+        try:
+            thread_name = threading.current_thread().getName()
+            if thread_name.startswith("__"):
+                thread_name = thread_name[2:]
+            CONSOLE.log(f"[{thread_name}] {text}")
+        finally:
+            self.__semaphore.release()
+
+
 @dataclass
 class EvaluationRun:
     instance: PipelineEvaluationInstance
     progress_logger: Logger
+    console_logger: ConsoleLogger
 
 
 @dataclass
@@ -353,6 +378,7 @@ class Evaluation:
                     input_pipelines=self.input_pipelines,
                 ),
                 progress_logger=progress_logger_handle.logger,
+                console_logger=ConsoleLogger(),
             )
 
             run.instance.init()
@@ -527,9 +553,26 @@ class Evaluation:
         config.runtime.metadata[group] = nested_metadata
 
     def __run_stage_by_stage(self, run: EvaluationRun) -> bool:
-        num_successful_runs = 0
+        num_queued_runs = 0
 
         num_runs = 0
+        num_runs_semaphore = Semaphore()
+
+        def incr_num_runs() -> int:
+            nonlocal run
+            nonlocal num_runs_semaphore
+            nonlocal num_runs
+            nonlocal total_runs
+
+            num_runs_semaphore.acquire()
+            try:
+                num_runs += 1
+                run.progress_logger.info(
+                    f"Progress: {num_runs} / {total_runs} ({'{:.2f}'.format(float(num_runs) / total_runs * 100.0)}%)"
+                )
+            finally:
+                num_runs_semaphore.release()
+
         total_runs = 0
         for stage in run.instance.stages:
             for category in self.lvis.dataset.keys():
@@ -541,37 +584,59 @@ class Evaluation:
             for category in self.lvis.dataset.keys():
                 CONSOLE.log(f"Processing category {category}...")
 
+                is_partial = False
+                uids: List[Uid] = []
                 for uid in self.lvis.dataset[category]:
-                    if (
-                        self.config.runtime.run_limit is not None
-                        and num_successful_runs >= self.config.runtime.run_limit
-                    ):
-                        return False
+                    if self.config.runtime.run_limit is not None and num_queued_runs >= self.config.runtime.run_limit:
+                        is_partial = True
+                        break
+                    uids.append(uid)
+                    num_queued_runs += 1
 
+                def process_uid(uid: Path) -> None:
                     file = Path(self.lvis.uid_to_file[uid])
 
-                    CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
+                    run.console_logger.log(f"Processing uid {uid} ({file_link(file)})...")
 
-                    if self.__run_pipeline(
+                    self.__run_pipeline(
                         PipelineRun(
                             parent=run,
                             file=file,
                             stages_filter={stage},
                         )
-                    ):
-                        num_successful_runs += 1
-                    num_runs += 1
-
-                    run.progress_logger.info(
-                        f"Progress: {num_runs} / {total_runs} ({'{:.2f}'.format(float(num_runs) / total_runs * 100.0)}%)"
                     )
+
+                    incr_num_runs()
+
+                with ThreadPoolExecutor(max_workers=self.config.runtime.threads, thread_name_prefix="_") as executor:
+                    deque(executor.map(process_uid, uids), maxlen=0)  # Consume generator
+
+                if is_partial:
+                    return False
 
         return True
 
     def __run_object_by_object(self, run: EvaluationRun) -> bool:
-        num_successful_runs = 0
+        num_queued_runs = 0
 
         num_runs = 0
+        num_runs_semaphore = Semaphore()
+
+        def incr_num_runs() -> int:
+            nonlocal run
+            nonlocal num_runs_semaphore
+            nonlocal num_runs
+            nonlocal total_runs
+
+            num_runs_semaphore.acquire()
+            try:
+                num_runs += 1
+                run.progress_logger.info(
+                    f"Progress: {num_runs} / {total_runs} ({'{:.2f}'.format(float(num_runs) / total_runs * 100.0)}%)"
+                )
+            finally:
+                num_runs_semaphore.release()
+
         total_runs = 0
         for category in self.lvis.dataset.keys():
             total_runs += len(self.lvis.dataset[category])
@@ -579,27 +644,35 @@ class Evaluation:
         for category in self.lvis.dataset.keys():
             CONSOLE.log(f"Processing category {category}...")
 
+            is_partial = False
+            uids: List[Uid] = []
             for uid in self.lvis.dataset[category]:
-                if self.config.runtime.run_limit is not None and num_successful_runs >= self.config.runtime.run_limit:
-                    return False
+                if self.config.runtime.run_limit is not None and num_queued_runs >= self.config.runtime.run_limit:
+                    is_partial = True
+                    break
+                uids.append(uid)
+                num_queued_runs += 1
 
+            def process_uid(uid: Path) -> None:
                 file = Path(self.lvis.uid_to_file[uid])
 
-                CONSOLE.log(f"Processing uid {uid} ({file_link(file)})...")
+                run.console_logger.log(f"Processing uid {uid} ({file_link(file)})...")
 
-                if self.__run_pipeline(
+                self.__run_pipeline(
                     PipelineRun(
                         parent=run,
                         file=file,
                         stages_filter=None,
                     )
-                ):
-                    num_successful_runs += 1
-                num_runs += 1
-
-                run.progress_logger.info(
-                    f"Progress: {num_runs} / {total_runs} ({'{:.2f}'.format(float(num_runs) / total_runs * 100.0)}%)"
                 )
+
+                incr_num_runs()
+
+            with ThreadPoolExecutor(max_workers=self.config.runtime.threads, thread_name_prefix="_") as executor:
+                deque(executor.map(process_uid, uids), maxlen=0)  # Consume generator
+
+            if is_partial:
+                return False
 
         return True
 
@@ -634,6 +707,16 @@ class Evaluation:
 
             process: Process = None
             try:
+                stdout_file: Optional[Path] = None
+                stderr_file: Optional[Path] = None
+
+                if self.config.runtime.threads > 1:
+                    pipeline_dir = run.parent.instance.get_pipeline_dir(run.file)
+                    pipeline_dir.mkdir(parents=True, exist_ok=True)
+
+                    stdout_file = str((pipeline_dir / "stdout.log").resolve())
+                    stderr_file = str((pipeline_dir / "stderr.log").resolve())
+
                 process = start_process(
                     target=pipeline_worker_func,
                     args=(
@@ -641,6 +724,8 @@ class Evaluation:
                         run.file,
                         run.stages_filter,
                         result,
+                        stdout_file,
+                        stderr_file,
                     ),
                 )
                 process.join()
