@@ -564,14 +564,18 @@ class Evaluation:
             nonlocal num_runs
             nonlocal total_runs
 
+            local_num_runs = 0
+
             num_runs_semaphore.acquire()
             try:
                 num_runs += 1
-                run.progress_logger.info(
-                    f"Progress: {num_runs} / {total_runs} ({'{:.2f}'.format(float(num_runs) / total_runs * 100.0)}%)"
-                )
+                local_num_runs = num_runs
             finally:
                 num_runs_semaphore.release()
+
+            run.progress_logger.info(
+                f"Progress: {local_num_runs} / {total_runs} ({'{:.2f}'.format(float(local_num_runs) / total_runs * 100.0)}%)"
+            )
 
         total_runs = 0
         for stage in run.instance.stages:
@@ -628,14 +632,18 @@ class Evaluation:
             nonlocal num_runs
             nonlocal total_runs
 
+            local_num_runs = 0
+
             num_runs_semaphore.acquire()
             try:
                 num_runs += 1
-                run.progress_logger.info(
-                    f"Progress: {num_runs} / {total_runs} ({'{:.2f}'.format(float(num_runs) / total_runs * 100.0)}%)"
-                )
+                local_num_runs = num_runs
             finally:
                 num_runs_semaphore.release()
+
+            run.progress_logger.info(
+                f"Progress: {local_num_runs} / {total_runs} ({'{:.2f}'.format(float(local_num_runs) / total_runs * 100.0)}%)"
+            )
 
         total_runs = 0
         for category in self.lvis.dataset.keys():
