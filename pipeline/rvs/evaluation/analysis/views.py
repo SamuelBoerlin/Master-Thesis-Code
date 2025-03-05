@@ -40,7 +40,7 @@ def count_selected_views(
 
         try:
             images, _ = load_index(index_file)
-            counts[uid] = len(images)
+            counts[uid] = len(set(images))
         except Exception:
             pass
 
