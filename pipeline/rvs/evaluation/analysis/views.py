@@ -15,12 +15,14 @@ from rvs.evaluation.analysis.histogram import (
     plot_avg_per_category,
     plot_histogram,
 )
-from rvs.evaluation.embedder import Embedder
+from rvs.evaluation.embedder import CachedEmbedder
 from rvs.evaluation.index import load_index
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.pipeline.stage import PipelineStage
+from rvs.utils.cache import get_pipeline_render_embedding_cache_key
 from rvs.utils.console import file_link
+from rvs.utils.nerfstudio import load_transforms_json
 from rvs.utils.plot import image_grid_plot, measure_artist, measure_figure, save_figure
 
 
@@ -96,7 +98,7 @@ def plot_selected_views_histogram(
 def embed_selected_views_avg(
     lvis: LVISDataset,
     uids: Set[Uid],
-    embedder: Embedder,
+    embedder: CachedEmbedder,
     instance: PipelineEvaluationInstance,
 ) -> Dict[Uid, NDArray]:
     embeddings: Dict[Uid, NDArray] = dict()
@@ -120,7 +122,9 @@ def embed_selected_views_avg(
                 if image_file.is_file() and image_file.name.endswith(".png"):
                     # CONSOLE.log(f"Embedding selected view {file_link(image_file)}")
 
-                    embedding = embedder.embed_image_numpy(image_file)
+                    embedding = embedder.embed_image_numpy(
+                        image_file, cache_key=get_pipeline_render_embedding_cache_key(model_file, image_file)
+                    )
 
                     avg_embedding = embedding if avg_embedding is None else avg_embedding + embedding
 
@@ -137,7 +141,7 @@ def embed_selected_views_avg(
 def embed_random_views_avg(
     lvis: LVISDataset,
     uids: Set[Uid],
-    embedder: Embedder,
+    embedder: CachedEmbedder,
     instance: PipelineEvaluationInstance,
     rng: Generator,
     number_of_views: int,
@@ -149,15 +153,15 @@ def embed_random_views_avg(
 
         model_file = Path(lvis.uid_to_file[uid])
 
-        views_dir = instance.create_pipeline_io(model_file).get_path(
+        transforms_file = instance.create_pipeline_io(model_file).get_path(
             PipelineStage.RENDER_VIEWS,
-            Path("renderer") / "images",
+            Path("renderer") / "transforms.json",
         )
 
-        if views_dir.exists() and views_dir.is_dir():
-            available_image_files = [
-                file for file in views_dir.iterdir() if file.is_file() and file.name.endswith(".png")
-            ]
+        if transforms_file.exists() and transforms_file.is_file():
+            _, views, _, _, _, _ = load_transforms_json(transforms_file.parent, set_view_path=True)
+
+            available_image_files = [view.path for view in views if view.path.exists() and view.path.is_file()]
             random_image_files = []
 
             for i in range(min(len(available_image_files), number_of_views)):
@@ -176,7 +180,9 @@ def embed_random_views_avg(
             for image_file in random_image_files:
                 # CONSOLE.log(f"Embedding random view {file_link(image_file)}")
 
-                embedding = embedder.embed_image_numpy(image_file)
+                embedding = embedder.embed_image_numpy(
+                    image_file, cache_key=get_pipeline_render_embedding_cache_key(model_file, image_file)
+                )
 
                 avg_embedding = embedding if avg_embedding is None else avg_embedding + embedding
 

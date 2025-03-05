@@ -35,14 +35,14 @@ from rvs.evaluation.analysis.views import (
     plot_selected_views_histogram,
     plot_selected_views_samples,
 )
-from rvs.evaluation.embedder import Embedder
+from rvs.evaluation.embedder import CachedEmbedder
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 
 
 def evaluate_results(
     lvis: LVISDataset,
-    embedder: Embedder,
+    embedder: CachedEmbedder,
     instance: PipelineEvaluationInstance,
     seed: int,
     output_dir: Path,
@@ -201,7 +201,7 @@ def evaluate_results(
         )
 
 
-def embed_categories(categories: List[Category], embedder: Embedder) -> Dict[Category, NDArray]:
+def embed_categories(categories: List[Category], embedder: CachedEmbedder) -> Dict[Category, NDArray]:
     embeddings = dict()
 
     for category in tqdm(categories):

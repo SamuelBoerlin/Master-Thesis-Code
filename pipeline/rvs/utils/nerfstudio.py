@@ -153,7 +153,7 @@ def load_transforms_json(
         transform_matrix = np.array(frame_json["transform_matrix"])
         view = View(i, transform_matrix)
         if set_view_path:
-            view.path = file_path
+            view.path = file_path if file_path.is_absolute() else (dir / file_path)
         views.append(view)
 
     return (path, views, focal_length_x, focal_length_y, width, height)

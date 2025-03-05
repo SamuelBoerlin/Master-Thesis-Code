@@ -114,19 +114,26 @@ class CachedEmbedder(Embedder):
     __parent: Embedder
     __cache_dir: Optional[Path]
     __validate_hash: bool
-    __cache_only: bool
+    __image_cache_required: bool
+    __text_cache_required: bool
 
     @Embedder.config.getter
     def config(self) -> EmbedderConfig:
         return self.__parent.config
 
     def __init__(
-        self, parent: Embedder, cache_dir: Optional[Path], validate_hash: bool = False, cache_only: bool = False
+        self,
+        parent: Embedder,
+        cache_dir: Optional[Path],
+        validate_hash: bool = False,
+        image_cache_required: bool = False,
+        text_cache_required: bool = False,
     ) -> None:
         self.__parent = parent
         self.__cache_dir = cache_dir
         self.__validate_hash = validate_hash
-        self.__cache_only = cache_only
+        self.__image_cache_required = image_cache_required
+        self.__text_cache_required = text_cache_required
 
     @staticmethod
     def create_text_cache_file(file: Path, text: str, config: EmbedderConfig, value: Union[Tensor, NDArray]) -> Path:
@@ -179,7 +186,7 @@ class CachedEmbedder(Embedder):
         if cached is not None:
             return cached
 
-        if self.__cache_only:
+        if self.__text_cache_required:
             raise ValueError(f"{cache_key} not cached")
 
         return self.__parent.embed_text(text)
@@ -189,7 +196,7 @@ class CachedEmbedder(Embedder):
         if cached is not None:
             return cached
 
-        if self.__cache_only:
+        if self.__text_cache_required:
             raise ValueError(f"{cache_key} not cached")
 
         return self.__parent.embed_text_numpy(text)
@@ -199,7 +206,7 @@ class CachedEmbedder(Embedder):
         if cached is not None:
             return cached
 
-        if self.__cache_only:
+        if self.__image_cache_required:
             raise ValueError(f"{cache_key} not cached")
 
         return self.__parent.embed_image(file)
@@ -209,7 +216,7 @@ class CachedEmbedder(Embedder):
         if cached is not None:
             return cached
 
-        if self.__cache_only:
+        if self.__image_cache_required:
             raise ValueError(f"{cache_key} not cached")
 
         return self.__parent.embed_image_numpy(file)

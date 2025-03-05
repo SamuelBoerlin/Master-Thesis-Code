@@ -15,6 +15,7 @@ from nerfstudio.utils.rich_utils import CONSOLE
 from rvs.evaluation.embedder import CachedEmbedder, Embedder, EmbedderConfig
 from rvs.evaluation.evaluation import EvaluationConfig
 from rvs.pipeline.pipeline import PipelineConfig
+from rvs.utils.cache import get_pipeline_render_embedding_cache_key
 from rvs.utils.config import find_config_working_dir, load_config
 from rvs.utils.console import file_link
 
@@ -110,7 +111,9 @@ class PipelineRendersCommand(Command):
                 console_semaphore.release()
 
         def embed(file: Path) -> None:
-            cache_object_file = output_dir / f"{pipeline_config.model_file.stem}_{file.stem}.json"
+            cache_object_file = (
+                output_dir / f"{get_pipeline_render_embedding_cache_key(pipeline_config.model_file, file)}.json"
+            )
 
             CachedEmbedder.create_image_cache_file(
                 cache_object_file, file, embedder.config, embedder.embed_image_numpy(file)

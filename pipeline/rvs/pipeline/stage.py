@@ -84,8 +84,8 @@ PipelineStage.DEPENDENCIES = {
     },
     PipelineStage.TRANSFORM_EMBEDDINGS: {PipelineStage.SAMPLE_EMBEDDINGS},
     PipelineStage.CLUSTER_EMBEDDINGS: {PipelineStage.TRANSFORM_EMBEDDINGS},
-    PipelineStage.SELECT_VIEWS: {PipelineStage.CLUSTER_EMBEDDINGS},
-    PipelineStage.OUTPUT: {PipelineStage.SELECT_VIEWS},
+    PipelineStage.SELECT_VIEWS: {PipelineStage.RENDER_VIEWS, PipelineStage.CLUSTER_EMBEDDINGS},
+    PipelineStage.OUTPUT: {PipelineStage.RENDER_VIEWS, PipelineStage.SELECT_VIEWS},
 }
 
 for stage in PipelineStage:

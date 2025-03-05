@@ -13,7 +13,7 @@ from nerfstudio.configs.base_config import InstantiateConfig, PrintableConfig
 from nerfstudio.utils.rich_utils import CONSOLE
 from torch.multiprocessing import Process
 
-from rvs.evaluation.embedder import Embedder, EmbedderConfig
+from rvs.evaluation.embedder import CachedEmbedder, EmbedderConfig
 from rvs.evaluation.evaluation_method import evaluate_results
 from rvs.evaluation.index import load_index
 from rvs.evaluation.lvis import LVISDataset
@@ -98,6 +98,18 @@ class EvaluationConfig(InstantiateConfig):
     embedder: EmbedderConfig = field(default_factory=EmbedderConfig)
     """Configuration of the CLIP embedder used for the precision/recall/accuracy evaluation"""
 
+    embedder_cache_dir: Optional[Path] = None
+    """Cache directory for embeddings"""
+
+    embedder_cache_validation: bool = True
+    """Whether to validate the cache by hash"""
+
+    embedder_image_cache_required: bool = False
+    """Whether to load images only from cache and abort if not cached"""
+
+    embedder_text_cache_required: bool = False
+    """Whether to load text only from cache and abort if not cached"""
+
     runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
     """Runtime settings that do not affect the results"""
 
@@ -134,7 +146,7 @@ class Evaluation:
     runs_dir: Path
     """Output directory for eval configs and logs"""
 
-    embedder: Embedder
+    embedder: CachedEmbedder
 
     input_pipelines: Optional[List[PipelineEvaluationInstance]]
 
@@ -177,7 +189,13 @@ class Evaluation:
         self.input_pipelines = self.__setup_inputs()
 
         CONSOLE.log("Setting up embedder...")
-        self.embedder = self.config.embedder.setup()
+        self.embedder = CachedEmbedder(
+            self.config.embedder.setup(),
+            self.config.embedder_cache_dir,
+            validate_hash=self.config.embedder_cache_validation,
+            image_cache_required=self.config.embedder_image_cache_required,
+            text_cache_required=self.config.embedder_text_cache_required,
+        )
 
         CONSOLE.log("Setting up dataset...")
 
