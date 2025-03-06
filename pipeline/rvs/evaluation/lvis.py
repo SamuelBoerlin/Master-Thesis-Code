@@ -20,6 +20,7 @@ class LVISDataset:
 
     # Cache irrelevant settings
     download_processes: int
+    __category_names: Optional[Dict[Category, str]]
 
     # Dataset
     dataset: Dict[Category, List[Uid]] = dict()
@@ -52,11 +53,15 @@ class LVISDataset:
         lvis_uids: Optional[Set[str]],
         lvis_download_processes: int = 4,
         per_category_limit: Optional[int] = None,
+        category_names: Optional[Dict[str, str]] = None,
     ) -> None:
         self.categories = lvis_categories
         self.uids = lvis_uids
         self.download_processes = int(lvis_download_processes)
         self.per_category_limit = int(per_category_limit) if per_category_limit is not None else None
+        self.__category_names = (
+            {key: str(value) for key, value in category_names.items()} if category_names is not None else None
+        )
 
     def load(self) -> None:
         CONSOLE.log("Loading LVIS dataset...")
@@ -155,3 +160,8 @@ class LVISDataset:
         for category in self.dataset.keys():
             for uid in self.dataset[category]:
                 self.uid_to_category[uid] = category
+
+    def get_category_name(self, category: Category) -> str:
+        if category in self.__category_names:
+            return self.__category_names[category]
+        return category

@@ -48,7 +48,7 @@ def evaluate_results(
     output_dir: Path,
 ) -> None:
     CONSOLE.rule("Embedding prompts for categories...")
-    categories_embeddings = embed_categories(lvis.dataset.keys(), embedder)
+    categories_embeddings = embed_categories(lvis.dataset.keys(), lvis, embedder)
 
     available_uids: Set[Uid] = set()
     for category in lvis.dataset.keys():
@@ -201,16 +201,19 @@ def evaluate_results(
         )
 
 
-def embed_categories(categories: List[Category], embedder: CachedEmbedder) -> Dict[Category, NDArray]:
+def embed_categories(
+    categories: List[Category], lvis: LVISDataset, embedder: CachedEmbedder
+) -> Dict[Category, NDArray]:
     embeddings = dict()
 
     for category in tqdm(categories):
-        prompt = category_name_to_embedding_prompt(category)
-        # CONSOLE.log(f"Embedding category {category} as '{prompt}'")
+        prompt = category_name_to_embedding_prompt(category, lvis)
+        CONSOLE.log(f"Embedding category '{category}' as '{prompt}'")
         embeddings[category] = embedder.embed_text_numpy(prompt)
 
     return embeddings
 
 
-def category_name_to_embedding_prompt(category: Category) -> None:
-    return category.replace("_", " ")
+def category_name_to_embedding_prompt(category: Category, lvis: LVISDataset) -> None:
+    category_name = lvis.get_category_name(category).replace("_", " ")
+    return f"a photo of a {category_name}."

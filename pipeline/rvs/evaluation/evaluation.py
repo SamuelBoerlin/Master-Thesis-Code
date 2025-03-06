@@ -93,6 +93,12 @@ class EvaluationConfig(InstantiateConfig):
     lvis_per_category_limit: Optional[int] = None
     """Per category limit, useful for testing"""
 
+    lvis_category_names: Optional[Dict[str, str]] = None
+    """Mapping from category to name, e.g. for text prompt embedding"""
+
+    lvis_category_names_file: Optional[Path] = None
+    """Same as lvis_category_names but loaded from the dictionary in the specified .json file"""
+
     output_dir: Path = Path("outputs")
     """Relative or absolute output directory to save all output data"""
 
@@ -243,11 +249,19 @@ class Evaluation:
             with self.config.lvis_uids_file.open("r") as f:
                 lvis_uids = lvis_uids.union(set(json.load(f)))
 
+        category_names = self.config.lvis_category_names
+        if self.config.lvis_category_names_file is not None:
+            if category_names is None:
+                category_names = dict()
+            with self.config.lvis_category_names_file.open("r") as f:
+                category_names.update(json.load(f))
+
         self.lvis = LVISDataset(
             lvis_categories,
             lvis_uids,
-            self.config.lvis_download_processes,
-            self.config.lvis_per_category_limit,
+            lvis_download_processes=self.config.lvis_download_processes,
+            per_category_limit=self.config.lvis_per_category_limit,
+            category_names=category_names,
         )
 
         if self.lvis.load_cache(self.lvis_cache_dir) is None:
