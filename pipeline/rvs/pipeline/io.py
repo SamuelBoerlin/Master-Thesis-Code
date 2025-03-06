@@ -29,13 +29,19 @@ class PipelineIO:
             if self.input_dirs[-1] != self.output_dir:
                 self.input_dirs.append(self.output_dir)
 
+    def is_output(self, stage: "PipelineStage") -> bool:
+        return self.__stages is None or stage in self.__stages
+
+    def is_input(self, stage: "PipelineStage") -> bool:
+        return not self.is_output(stage)
+
     def get_path(
         self,
         stage: "PipelineStage",
         path: Path,
         condition: Optional[Callable[[Path], bool]] = None,
     ) -> Path:
-        if self.__stages is None or stage in self.__stages:
+        if self.is_output(stage):
             return self.get_output_path(path)
         else:
             return self.get_input_path(path, condition=condition)
@@ -47,12 +53,14 @@ class PipelineIO:
         loader: Callable[[Path], T],
         expected_errors: Set[Type] = {FileNotFoundError},
     ) -> T:
-        if self.__stages is None or stage in self.__stages:
+        if self.is_output(stage):
             return self.load_output(path, loader)
         else:
             return self.load_input(path, loader, expected_errors=expected_errors)
 
     def get_output_path(self, path: Path) -> Path:
+        if path.is_absolute():
+            return path
         return self.output_dir / path
 
     def mk_output_path(self, path: Path) -> Path:
@@ -65,6 +73,8 @@ class PipelineIO:
         path: Path,
         loader: Callable[[Path], T],
     ) -> T:
+        if path.is_absolute():
+            return loader(path)
         return loader(self.get_output_path(path))
 
     def get_input_path(
@@ -72,6 +82,8 @@ class PipelineIO:
         path: Path,
         condition: Optional[Callable[[Path], bool]] = None,
     ) -> Path:
+        if path.is_absolute():
+            return path
         for input_dir in self.input_dirs:
             input_path = input_dir / path
             if input_path.exists() and (condition is None or condition(input_path)):
@@ -84,6 +96,8 @@ class PipelineIO:
         loader: Callable[[Path], T],
         expected_errors: Set[Type] = {FileNotFoundError},
     ) -> T:
+        if path.is_absolute():
+            return loader(path)
         for input_dir in self.input_dirs:
             input_path = input_dir / path
             try:

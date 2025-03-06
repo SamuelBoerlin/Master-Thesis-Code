@@ -264,7 +264,7 @@ class Pipeline:
             pipeline_state.scratch_output_dir.mkdir(parents=True, exist_ok=True)
 
             views = self.views.generate(pipeline_state)
-            pipeline_state.training_views = [View(view.index, view.transform.copy(), view.path) for view in views]
+            pipeline_state.training_views = [View.copy(view) for view in views]
             for view in pipeline_state.training_views:
                 view.transform.setflags(write=False)
 
@@ -310,7 +310,7 @@ class Pipeline:
             self.__save_model_normalization(pipeline_state)
 
             for view in pipeline_state.training_views:
-                self.__set_view_path(view, output=True)
+                self.__set_view_path(view)
         elif self.should_load_stage(PipelineStage.RENDER_VIEWS):
             CONSOLE.log("Loading normalization...")
             self.__load_model_normalization(pipeline_state)
@@ -537,9 +537,11 @@ class Pipeline:
                 lambda xs: self.clustering.soft_classifier(xs, pipeline_state.cluster_parameters),
                 pipeline_state,
             )
-            pipeline_state.selected_views = [View(view.index, view.transform.copy(), view.path) for view in views]
+            pipeline_state.selected_views = [View.copy(view) for view in views]
             for view in pipeline_state.selected_views:
                 view.transform.setflags(write=False)
+
+            self.__save_selected_views(pipeline_state)
 
             if self.config.render_sample_clusters_of_selected_views:
                 for i, view in enumerate(pipeline_state.selected_views):
@@ -564,8 +566,11 @@ class Pipeline:
 
             CONSOLE.log("Selected views:")
             for i, view in enumerate(pipeline_state.selected_views):
-                CONSOLE.log(f"{view.index + 1} ({file_link(view.path) if view.path is not None else 'N/A'})")
-        # TODO Implement loading data
+                resolved_path = view.resolve_path(self.__io)
+                CONSOLE.log(f"{view.index + 1} ({file_link(resolved_path) if resolved_path is not None else 'N/A'})")
+        elif self.should_load_stage(PipelineStage.SELECT_VIEWS):
+            CONSOLE.log("Loading selected views...")
+            self.__load_selected_views(pipeline_state)
 
         pipeline_state.scratch_output_dir = None
 
@@ -622,23 +627,18 @@ class Pipeline:
         if state.training_views is not None:
             try:
                 for view in state.training_views:
-                    self.__set_view_path(view, output=False)
+                    self.__set_view_path(view)
             except Exception as ex:
                 CONSOLE.log("Failed loading view images:")
                 raise ex
 
-    def __set_view_path(self, view: View, output: bool) -> None:
+    def __set_view_path(self, view: View) -> None:
         """Sets the view's path if path is not yet set and if a corresponding image file already exists"""
         if view.path is None:
-            path = self.__renderer_output_dir / "images" / get_frame_name(view)
-            if output:
-                path = self.__io.get_output_path(path)
-            else:
-                path = self.__io.get_input_path(path)
-            if path.exists():
-                view.path = path
-            else:
-                raise FileNotFoundError(f"View image {path} not found")
+            view.path = self.__renderer_output_dir / "images" / get_frame_name(view)
+            resolved_path = view.resolve_path(self.__io)
+            if resolved_path is None:
+                raise FileNotFoundError(f"View image {view.path} not found")
 
     def __save_model_normalization(self, state: "PipelineState") -> Path:
         path = self.__io.get_output_path(self.__renderer_output_dir / "normalization.json")
@@ -651,6 +651,7 @@ class Pipeline:
                 f,
             )
         CONSOLE.log(f"Saved normalization to {file_link(path)}")
+        return path
 
     def __load_model_normalization(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__renderer_output_dir / "normalization.json")
@@ -672,6 +673,7 @@ class Pipeline:
         with path.open("w") as f:
             json.dump(state.sample_positions.tolist(), f)
         CONSOLE.log(f"Saved positions to {file_link(path)}")
+        return path
 
     def __load_sample_positions(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__sampler_output_dir / "positions.json")
@@ -697,6 +699,7 @@ class Pipeline:
             }
             json.dump(obj, f)
         CONSOLE.log(f"Saved embeddings to {file_link(path)}")
+        return path
 
     def __load_sample_embeddings(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__embedding_output_dir / "embeddings.json")
@@ -733,6 +736,7 @@ class Pipeline:
                 f,
             )
         CONSOLE.log(f"Saved transform to {file_link(path)}")
+        return path
 
     def __load_embeddings_transform(self, state: "PipelineState") -> Path:
         self.__load_transformed_embeddings(state)
@@ -767,6 +771,7 @@ class Pipeline:
             }
             json.dump(obj, f)
         CONSOLE.log(f"Saved transformed embeddings to {file_link(path)}")
+        return path
 
     def __load_transformed_embeddings(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__transform_output_dir / "embeddings.json")
@@ -799,6 +804,7 @@ class Pipeline:
                 f,
             )
         CONSOLE.log(f"Saved clusters to {file_link(path)}")
+        return path
 
     def __load_clusters(self, state: "PipelineState") -> Path:
         path = self.__io.get_input_path(self.__clustering_output_dir / "clusters.json")
@@ -815,4 +821,53 @@ class Pipeline:
             return path
         except Exception as ex:
             CONSOLE.log("Failed loading clusters:")
+            raise ex
+
+    def __save_selected_views(self, state: "PipelineState") -> Path:
+        views_json_arr: List[str] = []
+
+        for view in state.selected_views:
+            if view.path is None:
+                raise ValueError(f"View {view.index + 1} is missing path (hasn't been saved to a file?)")
+
+            if view.resolve_path(self.__io) is None:
+                raise ValueError(f"View {view.index + 1} path {view.path} does not exist")
+
+            views_json_arr.append(
+                {
+                    "index": view.index,
+                    "transform": view.transform.tolist(),
+                    "path": str(view.path),
+                }
+            )
+
+        path = self.__io.get_output_path(self.__selection_output_dir / "views.json")
+        with path.open("w") as f:
+            json.dump(views_json_arr, f)
+
+        CONSOLE.log(f"Saved selected views to {file_link(path)}")
+
+        return path
+
+    def __load_selected_views(self, state: "PipelineState") -> Path:
+        path = self.__io.get_input_path(self.__selection_output_dir / "views.json")
+        try:
+            state.selected_views = []
+            with path.open("r") as f:
+                json_obj = json.load(f)
+                for view_obj in json_obj:
+                    view = View(
+                        view_obj["index"],
+                        np.array(view_obj["transform"]),
+                        Path(view_obj["path"]),
+                    )
+                    view.transform.setflags(write=False)
+                    resolved_path = view.resolve_path(self.__io)
+                    if resolved_path is None:
+                        raise ValueError(f"View {view.index + 1} path {view.path} does not exist")
+                    state.selected_views.append(view)
+            CONSOLE.log(f"Loaded selected views from {file_link(path)}")
+            return path
+        except Exception as ex:
+            CONSOLE.log("Failed loading selected views:")
             raise ex

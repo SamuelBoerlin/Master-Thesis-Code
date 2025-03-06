@@ -97,14 +97,15 @@ class PipelineEvaluationInstance:
             transforms: List[Path] = []
 
             for view in results.selected_views:
-                if view.path is None:
+                view_path = view.resolve_path(results.pipeline.io)
+                if view_path is None:
                     raise ValueError(f"View {view.index + 1} is missing path (hasn't been saved to a file?)")
 
                 frame_name = get_frame_name(view)
 
                 image_path = output_dir / frame_name
 
-                shutil.copyfile(view.path, image_path)
+                shutil.copyfile(view_path, image_path)
 
                 images.append(image_path)
 

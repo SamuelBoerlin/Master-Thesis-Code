@@ -6,6 +6,8 @@ import numpy as np
 from nerfstudio.configs.base_config import InstantiateConfig
 from numpy.typing import NDArray
 
+from rvs.pipeline.io import PipelineIO
+from rvs.pipeline.stage import PipelineStage
 from rvs.pipeline.state import PipelineState
 
 
@@ -24,6 +26,33 @@ class View:
         self.index = index
         self.transform = transform
         self.path = path
+
+    @classmethod
+    def copy(cls, view: "View") -> "View":
+        return View(view.index, view.transform.copy(), path=view.path)
+
+    def resolve_path(self, io: PipelineIO) -> Optional[Path]:
+        if self.path is None:
+            return None
+
+        if self.path.is_absolute():
+            return self.path
+
+        if io.is_output(PipelineStage.SELECT_VIEWS):
+            path = io.get_output_path(self.path)
+            if path.exists() and path.is_file():
+                return path
+
+        if io.is_output(PipelineStage.RENDER_VIEWS):
+            path = io.get_output_path(self.path)
+            if path.exists() and path.is_file():
+                return path
+
+        path = io.get_input_path(self.path)
+        if path.exists() and path.is_file():
+            return path
+
+        return None
 
 
 class Views:
