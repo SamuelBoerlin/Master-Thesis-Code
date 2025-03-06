@@ -138,6 +138,63 @@ def embed_selected_views_avg(
     return embeddings
 
 
+def embed_best_views_avg(
+    lvis: LVISDataset,
+    uids: Set[Uid],
+    embedder: CachedEmbedder,
+    instance: PipelineEvaluationInstance,
+    categories_embeddings: Dict[Category, NDArray],
+) -> Dict[Uid, NDArray]:
+    embeddings: Dict[Uid, NDArray] = dict()
+
+    for uid in tqdm(sorted(uids)):
+        model_file = Path(lvis.uid_to_file[uid])
+
+        model_file = Path(lvis.uid_to_file[uid])
+
+        model_category = lvis.uid_to_category[uid]
+
+        if model_category in categories_embeddings:
+            category_embedding = categories_embeddings[model_category]
+
+            transforms_file = instance.create_pipeline_io(model_file).get_path(
+                PipelineStage.RENDER_VIEWS,
+                Path("renderer") / "transforms.json",
+            )
+
+            best_embedding: Optional[NDArray] = None
+            best_embedding_similarity: Optional[float] = None
+
+            if transforms_file.exists() and transforms_file.is_file():
+                _, views, _, _, _, _ = load_transforms_json(transforms_file.parent, set_view_path=True)
+
+                available_image_files = [view.path for view in views if view.path.exists() and view.path.is_file()]
+
+                for image_file in available_image_files:
+                    # CONSOLE.log(f"Embedding view {file_link(image_file)}")
+
+                    embedding = embedder.embed_image_numpy(
+                        image_file, cache_key=get_pipeline_render_embedding_cache_key(model_file, image_file)
+                    )
+
+                    similarity = np.dot(embedding, category_embedding)
+
+                    if (
+                        best_embedding is None
+                        or best_embedding_similarity is None
+                        or similarity > best_embedding_similarity
+                    ):
+                        best_embedding = embedding
+                        best_embedding_similarity = similarity
+
+            if best_embedding is not None:
+                embeddings[uid] = best_embedding
+
+                # CONSOLE.log(f"Embedded all views of {file_link(model_file)}")
+
+    return embeddings
+
+
 def embed_random_views_avg(
     lvis: LVISDataset,
     uids: Set[Uid],

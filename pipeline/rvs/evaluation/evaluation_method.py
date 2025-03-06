@@ -29,6 +29,7 @@ from rvs.evaluation.analysis.utils import count_category_items
 from rvs.evaluation.analysis.views import (
     calculate_selected_views_avg_per_category,
     calculte_selected_views_histogram_per_category,
+    embed_best_views_avg,
     embed_random_views_avg,
     embed_selected_views_avg,
     plot_selected_views_avg_per_category,
@@ -77,6 +78,16 @@ def evaluate_results(
     )
     available_uids = avg_selected_views_embeddings.keys()
 
+    CONSOLE.rule("Embedding best views w.r.t. ground truth...")
+    best_views_embeddings = embed_best_views_avg(
+        lvis,
+        available_uids,
+        embedder,
+        instance,
+        categories_embeddings,
+    )
+    available_uids = best_views_embeddings.keys()
+
     CONSOLE.rule("Calculate number of clusters...")
     avg_number_of_clusters_per_category = calculate_clusters_avg_per_category(lvis, available_uids, instance)
     histogram_of_clusters_per_category = calculte_clusters_histogram_per_category(lvis, available_uids, instance)
@@ -91,6 +102,7 @@ def evaluate_results(
         {
             f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
             f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
+            "Method 3: Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
         },
         categories_embeddings,
     )
@@ -99,6 +111,7 @@ def evaluate_results(
         {
             f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
             f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
+            "Method 3: Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
         },
         categories_embeddings,
     )
@@ -108,6 +121,7 @@ def evaluate_results(
         {
             f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
             f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
+            "Method 3: Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
         },
         categories_embeddings,
         lvis.uid_to_category,
