@@ -100,6 +100,7 @@ def embed_selected_views_avg(
     uids: Set[Uid],
     embedder: CachedEmbedder,
     instance: PipelineEvaluationInstance,
+    include_duplicates: bool = True,
 ) -> Dict[Uid, NDArray]:
     embeddings: Dict[Uid, NDArray] = dict()
 
@@ -116,20 +117,28 @@ def embed_selected_views_avg(
             pass
 
         if images is not None:
+            if not include_duplicates:
+                images = list(dict.fromkeys(images))
+
             avg_embedding = None
+            avg_embedding_count = 0
 
             for image_file in images:
-                if image_file.is_file() and image_file.name.endswith(".png"):
-                    # CONSOLE.log(f"Embedding selected view {file_link(image_file)}")
+                # CONSOLE.log(f"Embedding selected view {file_link(image_file)}")
 
-                    embedding = embedder.embed_image_numpy(
-                        image_file, cache_key=get_pipeline_render_embedding_cache_key(model_file, image_file)
-                    )
+                embedding = embedder.embed_image_numpy(
+                    image_file, cache_key=get_pipeline_render_embedding_cache_key(model_file, image_file)
+                )
 
-                    avg_embedding = embedding if avg_embedding is None else avg_embedding + embedding
+                if avg_embedding is None:
+                    avg_embedding = embedding
+                else:
+                    avg_embedding += embedding
+
+                avg_embedding_count += 1
 
             if avg_embedding is not None:
-                avg_embedding /= np.linalg.norm(avg_embedding)
+                avg_embedding /= avg_embedding_count
 
                 embeddings[uid] = avg_embedding
 
@@ -233,6 +242,7 @@ def embed_random_views_avg(
                 continue
 
             avg_embedding = None
+            avg_embedding_count = 0
 
             for image_file in random_image_files:
                 # CONSOLE.log(f"Embedding random view {file_link(image_file)}")
@@ -241,10 +251,15 @@ def embed_random_views_avg(
                     image_file, cache_key=get_pipeline_render_embedding_cache_key(model_file, image_file)
                 )
 
-                avg_embedding = embedding if avg_embedding is None else avg_embedding + embedding
+                if avg_embedding is None:
+                    avg_embedding = embedding
+                else:
+                    avg_embedding += embedding
+
+                avg_embedding_count += 1
 
             if avg_embedding is not None:
-                avg_embedding /= np.linalg.norm(avg_embedding)
+                avg_embedding /= avg_embedding_count
 
                 embeddings[uid] = avg_embedding
 
