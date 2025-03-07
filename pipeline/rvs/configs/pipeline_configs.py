@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import replace
-from typing import Dict, Tuple
+import sys
+from dataclasses import dataclass, replace
+from typing import Any, Dict, List, Tuple
 
 import tyro
 from lerf.lerf_config import lerf_method, lerf_method_big, lerf_method_lite
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.engine.trainer import TrainerConfig
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.style import Style
+from tyro._argparse_formatter import THEME
 
 from rvs.lerf.lerf_datamanager import CustomLERFDataManagerConfig
 from rvs.lerf.lerf_model import CustomLERFModelConfig
@@ -27,7 +33,7 @@ from rvs.pipeline.sampler import (
 )
 from rvs.pipeline.selection import MostSimilarToCentroidTrainingViewSelectionConfig
 from rvs.pipeline.stage import PipelineStage
-from rvs.pipeline.transform import IdentityTransformConfig
+from rvs.pipeline.transform import FixedPCATransformConfig, IdentityTransformConfig, VariancePCATransformConfig
 from rvs.pipeline.views import FermatSpiralViewsConfig, SphereViewsConfig
 from rvs.utils.dataclasses import extend_dataclass_obj
 
@@ -110,7 +116,15 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
         "identity_transform": (
             "Identity transform, i.e. embeddings are not changed at all",
             IdentityTransformConfig(),
-        )
+        ),
+        "fixed_pca_transform": (
+            "PCA transform with fixed number of principal components",
+            FixedPCATransformConfig(),
+        ),
+        "variance_pca_transform": (
+            "PCA transform with variable number of principal components based on the amount of explained variance",
+            VariancePCATransformConfig(),
+        ),
     },
     PipelineStage.CLUSTER_EMBEDDINGS: {
         "kmeans_clustering": ("Fixed-k KMeans clustering", KMeansClusteringConfig()),
@@ -132,72 +146,127 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
     },
 }
 
-pipeline_configs: Dict[str, PipelineConfig] = dict()
-pipeline_descriptions: Dict[str, str] = dict()
-
-for views_method, (views_description, views_config) in pipeline_components[PipelineStage.SAMPLE_VIEWS].items():
-    for renderer_method, (renderer_description, renderer_config) in pipeline_components[
-        PipelineStage.RENDER_VIEWS
-    ].items():
-        for embeddings_method, (embeddings_description, embeddings_configs) in pipeline_components[
-            PipelineStage.SAMPLE_EMBEDDINGS
-        ].items():
-            for field_method, (field_description, field_config) in pipeline_components[
-                PipelineStage.TRAIN_FIELD
-            ].items():
-                for sampler_method, (sampler_description, sampler_config) in pipeline_components[
-                    PipelineStage.SAMPLE_POSITIONS
-                ].items():
-                    for transform_method, (transform_description, transform_config) in pipeline_components[
-                        PipelineStage.TRANSFORM_EMBEDDINGS
-                    ].items():
-                        for clustering_method, (clustering_description, clustering_config) in pipeline_components[
-                            PipelineStage.CLUSTER_EMBEDDINGS
-                        ].items():
-                            for selection_method, (selection_description, selection_config) in pipeline_components[
-                                PipelineStage.SELECT_VIEWS
-                            ].items():
-                                method = ".".join(
-                                    [
-                                        views_method,
-                                        renderer_method,
-                                        embeddings_method,
-                                        field_method,
-                                        sampler_method,
-                                        transform_method,
-                                        clustering_method,
-                                        selection_method,
-                                    ]
-                                )
-
-                                description = (
-                                    f"1. {views_description}\n"
-                                    f"2. {renderer_description}\n"
-                                    f"3. {embeddings_description}\n"
-                                    f"4. {field_description}\n"
-                                    f"5. {sampler_description}\n"
-                                    f"6. {transform_description}\n"
-                                    f"7. {clustering_description}\n"
-                                    f"8. {selection_description}\n"
-                                )
-
-                                config = PipelineConfig(
-                                    method_name=method,
-                                    views=views_config,
-                                    renderer=renderer_config,
-                                    embeddings=embeddings_configs,
-                                    field=field_config,
-                                    sampler=sampler_config,
-                                    transform=transform_config,
-                                    clustering=clustering_config,
-                                    selection=selection_config,
-                                )
-
-                                pipeline_configs[method] = config
-                                pipeline_descriptions[method] = description
-
-AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[
-    tyro.conf.FlagConversionOff[
-        tyro.extras.subcommand_type_from_defaults(defaults=pipeline_configs, descriptions=pipeline_descriptions)
-    ]
+component_stages: List[Tuple[PipelineStage, str]] = [
+    (PipelineStage.SAMPLE_VIEWS, "<views>"),
+    (PipelineStage.RENDER_VIEWS, "<renderer>"),
+    (PipelineStage.SAMPLE_EMBEDDINGS, "<embedding>"),
+    (PipelineStage.TRAIN_FIELD, "<field>"),
+    (PipelineStage.SAMPLE_POSITIONS, "<sampler>"),
+    (PipelineStage.TRANSFORM_EMBEDDINGS, "<transform>"),
+    (PipelineStage.CLUSTER_EMBEDDINGS, "<clustering>"),
+    (PipelineStage.SELECT_VIEWS, "<selection>"),
 ]
+
+
+def pipeline_method_format() -> str:
+    return ".".join([slug for _, slug in component_stages])
+
+
+def pipeline_method_format_arg() -> str:
+    return pipeline_method_format().replace("<", "").replace(">", "")
+
+
+def parse_pipeline_method(method: str) -> Tuple[PipelineConfig, str]:
+    components = method.split(".")
+
+    if len(components) != len(component_stages):
+        raise ValueError(
+            f"Invalid number of components {len(components)}, expected {len(component_stages)}: {pipeline_method_format()}"
+        )
+
+    component_configs: Dict[PipelineStage, InstantiateConfig] = dict()
+
+    pipeline_description = ""
+
+    for i, component in enumerate(components):
+        stage, slug = component_stages[i]
+
+        available_components = pipeline_components[stage]
+
+        if component not in available_components:
+            console = Console(theme=THEME.as_rich_theme(), stderr=True)
+            console.print(
+                Panel(
+                    Group(
+                        f"Invalid [bold]{slug}[/bold] pipeline component '{component}', expected one of: [bold]"
+                        + ", ".join(sorted(available_components.keys()))
+                        + "[/bold]",
+                        Rule(style=Style(color="red")),
+                        f"For full helptext, run [bold]{pipeline_method_format_arg()}[/bold]",
+                    ),
+                    title="[bold]Invalid pipeline[/bold]",
+                    title_align="left",
+                    border_style=Style(color="bright_red"),
+                    expand=False,
+                )
+            )
+            sys.exit(2)
+
+        component_description, component_config = available_components[component]
+
+        component_configs[stage] = component_config
+
+        pipeline_description += f"{i + 1}. {component_description}\n"
+
+    pipeline_config = PipelineConfig(
+        model_file=tyro.MISSING,
+        method_name=method,
+        views=component_configs[PipelineStage.SAMPLE_VIEWS],
+        renderer=component_configs[PipelineStage.RENDER_VIEWS],
+        embeddings=component_configs[PipelineStage.SAMPLE_EMBEDDINGS],
+        field=component_configs[PipelineStage.TRAIN_FIELD],
+        sampler=component_configs[PipelineStage.SAMPLE_POSITIONS],
+        transform=component_configs[PipelineStage.TRANSFORM_EMBEDDINGS],
+        clustering=component_configs[PipelineStage.CLUSTER_EMBEDDINGS],
+        selection=component_configs[PipelineStage.SELECT_VIEWS],
+    )
+
+    return pipeline_config, pipeline_description
+
+
+def list_available_components() -> str:
+    text = ""
+
+    for stage, slug in component_stages:
+        if text != "":
+            text += "\n"
+
+        text += f"{slug}:\n"
+
+        for component, (description, _) in sorted(pipeline_components[stage].items(), key=lambda t: t[0]):
+            text += f" {component}: {description}\n"
+
+    return text
+
+
+@dataclass
+class MethodDummyConfig:
+    pass
+
+
+def setup_pipeline_tyro_union(args: List[str]) -> Any:
+    pipeline_configs: Dict[str, PipelineConfig] = dict()
+    pipeline_descriptions: Dict[str, str] = dict()
+
+    pipeline_configs["help"] = pipeline_configs[pipeline_method_format_arg()] = MethodDummyConfig()
+    pipeline_descriptions["help"] = ""
+    pipeline_descriptions[pipeline_method_format_arg()] = (
+        f"Runs a pipeline {pipeline_method_format()}\n\n{list_available_components()}"
+    )
+
+    if len(args) > 1:
+        subcommand = args[1]
+
+        if subcommand not in pipeline_configs and "." in subcommand:
+            config, description = parse_pipeline_method(subcommand)
+
+            pipeline_configs[subcommand] = config
+            pipeline_descriptions[subcommand] = description
+
+    assert len(pipeline_configs) == len(pipeline_descriptions)
+
+    return tyro.conf.SuppressFixed[
+        tyro.conf.FlagConversionOff[
+            tyro.extras.subcommand_type_from_defaults(defaults=pipeline_configs, descriptions=pipeline_descriptions)
+        ]
+    ]

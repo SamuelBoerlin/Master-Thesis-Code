@@ -162,6 +162,6 @@ class LVISDataset:
                 self.uid_to_category[uid] = category
 
     def get_category_name(self, category: Category) -> str:
-        if category in self.__category_names:
+        if self.__category_names is not None and category in self.__category_names:
             return self.__category_names[category]
         return category

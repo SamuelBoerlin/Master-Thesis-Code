@@ -727,12 +727,30 @@ class XMeansClustering(Clustering):
                 alpha=0.5,
                 zorder=0,
             )
+            ax1.vlines(
+                x_frac_solution_iteration,
+                -1000000000,
+                y_solution_global_score,
+                color="gray",
+                linestyle=":",
+                alpha=0.5,
+                zorder=0,
+            )
 
         if y_solution_num_clusters is not None:
             ax2.hlines(
                 y_solution_num_clusters,
                 x_frac_solution_iteration,
                 1000000000,
+                color="gray",
+                linestyle=":",
+                alpha=0.5,
+                zorder=0,
+            )
+            ax2.vlines(
+                x_frac_solution_iteration,
+                -1000000000,
+                y_solution_num_clusters,
                 color="gray",
                 linestyle=":",
                 alpha=0.5,
@@ -801,6 +819,15 @@ class XMeansClustering(Clustering):
                 y_solution,
                 -1000000000,
                 x_solution,
+                color="gray",
+                linestyle=":",
+                alpha=0.5,
+                zorder=0,
+            )
+            ax.vlines(
+                x_solution,
+                -1000000000,
+                y_solution,
                 color="gray",
                 linestyle=":",
                 alpha=0.5,

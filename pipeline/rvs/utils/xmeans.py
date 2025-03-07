@@ -119,6 +119,17 @@ class CustomXMeans(xmeans):
 
         super().process()
 
+        self.solution = CustomXMeansSolution(
+            indices=self.get_clusters(),
+            centers=self.get_centers(),
+            score=super()._xmeans__splitting_criterion(self.get_clusters(), self.get_centers()),
+        )
+
+        self.data.clusters_iterations.append(self.data.improve_structure_count)
+        self.data.clusters_global_scores.append(self.solution.score)
+        self.data.clusters_indices.append(self.solution.indices)
+        self.data.clusters_centers.append(self.solution.centers)
+
         if self.evaluate_iterations:
             assert len(self.data.iterations_global_scores) == self.data.improve_parameters_count
 
@@ -137,12 +148,6 @@ class CustomXMeans(xmeans):
             assert len(self.data.clusters_global_scores) == len(self.data.clusters_indices)
             assert len(self.data.clusters_indices) == len(self.data.clusters_centers)
             assert len(self.data.clusters_global_scores) >= self.data.improve_structure_count
-
-        self.solution = CustomXMeansSolution(
-            indices=self.get_clusters(),
-            centers=self.get_centers(),
-            score=super()._xmeans__splitting_criterion(self.get_clusters(), self.get_centers()),
-        )
 
         return self
 
