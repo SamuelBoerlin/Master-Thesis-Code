@@ -1,7 +1,7 @@
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Tuple, Type
+from typing import Any, Dict, Tuple, Type
 
 import numpy as np
 from git import List, Optional
@@ -838,6 +838,97 @@ class XMeansClustering(Clustering):
         ax.set_ylim(ylim)
 
         save_figure(fig, file)
+
+    def get_number_of_clusters(self, parameters: Dict[str, NDArray]) -> int:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        return len(parameters["centroids"])
+
+    def hard_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray[np.intp]:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        if "normalization" not in parameters:
+            raise ValueError("Missing normalization parameter")
+
+        return KMeansClustering.kmeans_hard_classifier(
+            samples, parameters["centroids"], normalization=parameters["normalization"]
+        )
+
+    def soft_classifier(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray:
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter")
+
+        if "normalization" not in parameters:
+            raise ValueError("Missing normalization parameter")
+
+        return KMeansClustering.kmeans_pseudo_soft_classifier(
+            samples, parameters["centroids"], parameters["normalization"]
+        )
+
+
+@dataclass
+class LargestKMeansClusteringConfig(FixedKClusteringConfig):
+    _target: Type = field(default_factory=lambda: LargestKMeansClustering)
+
+    num_clusters: int = 1
+    """Number of largest clusters"""
+
+    implementation: ClusteringConfig = field(default_factory=lambda: ClusteringConfig)
+    """Acutal clustering implementation to be used"""
+
+    def setup(self, **kwargs) -> Any:
+        implementation = self.implementation.setup(**kwargs)
+        return self._target(self, implementation=implementation, **kwargs)
+
+
+class LargestKMeansClustering(Clustering):
+    config: LargestKMeansClusteringConfig
+
+    __implementation: Clustering
+
+    def __init__(self, config: LargestKMeansClusteringConfig, implementation: ClusteringConfig) -> None:
+        super().__init__(config)
+        self.__implementation = implementation
+
+    def cluster(self, samples: NDArray, pipeline_state: PipelineState) -> Tuple[Dict[str, NDArray], NDArray[np.intp]]:
+        parameters, indices = self.__implementation.cluster(samples, pipeline_state)
+
+        if "centroids" not in parameters:
+            raise ValueError("Missing centroids parameter in parameters returned by implementation")
+
+        centroids = parameters["centroids"]
+
+        if "normalization" not in parameters:
+            raise ValueError("Missing normalization parameter in parameters returned by implementation")
+
+        normalization = parameters["normalization"]
+
+        cluster_sizes = np.zeros((self.get_number_of_clusters(parameters),), dtype=np.intp)
+        for i in range(indices.shape[0]):
+            cluster_sizes[indices[i]] += 1
+
+        sorted_clusters = sorted(
+            [(i, int(cluster_sizes[i])) for i in range(cluster_sizes.shape[0])], key=lambda t: t[1], reverse=True
+        )
+
+        selected_cluster_indices = [index for index, _ in sorted_clusters[: self.config.num_clusters]]
+
+        selected_centroids_list: List[NDArray] = []
+        for cluster_index in selected_cluster_indices:
+            selected_centroids_list.append(centroids[cluster_index])
+        selected_centroids = np.stack(selected_centroids_list, axis=0)
+
+        reassigned_indices = KMeansClustering.kmeans_hard_classifier(
+            samples, selected_centroids, normalization=normalization
+        )
+
+        return {
+            "centroids": selected_centroids,
+            "input_centroids": centroids,
+            "normalization": normalization,
+        }, reassigned_indices
 
     def get_number_of_clusters(self, parameters: Dict[str, NDArray]) -> int:
         if "centroids" not in parameters:

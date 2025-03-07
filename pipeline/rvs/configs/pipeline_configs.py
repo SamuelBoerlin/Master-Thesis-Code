@@ -21,6 +21,7 @@ from rvs.pipeline.clustering import (
     ClosestElbowKMeansClusteringConfig,
     FractionalElbowKMeansClusteringConfig,
     KMeansClusteringConfig,
+    LargestKMeansClusteringConfig,
     XMeansClusteringConfig,
 )
 from rvs.pipeline.embedding import ClipAtScaleEmbeddingConfig, DinoEmbeddingConfig
@@ -137,6 +138,22 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
             ClosestElbowKMeansClusteringConfig(),
         ),
         "xmeans_bic_clustering": ("X-Means clustering using Bayesian Information Criterion", XMeansClusteringConfig()),
+        "largest_kmeans_clustering": (
+            "Largest n clusters of fixed-k KMeans clustering",
+            LargestKMeansClusteringConfig(implementation=KMeansClusteringConfig()),
+        ),
+        "largest_frac_elbow_kmeans_clustering": (
+            "Largest n clusters of Variable-k KMeans clustering with elbow method where k is selected based on a fraction of the distortion range",
+            LargestKMeansClusteringConfig(implementation=FractionalElbowKMeansClusteringConfig()),
+        ),
+        "largest_closest_elbow_kmeans_clustering": (
+            "Largest n clusters of variable-k KMeans clustering with elbow method where k is selected by the closest point to the origin",
+            LargestKMeansClusteringConfig(implementation=ClosestElbowKMeansClusteringConfig()),
+        ),
+        "largest_xmeans_bic_clustering": (
+            "Largest n clusters of X-Means clustering using Bayesian Information Criterion",
+            LargestKMeansClusteringConfig(implementation=XMeansClusteringConfig()),
+        ),
     },
     PipelineStage.SELECT_VIEWS: {
         "best_training_selection": (
@@ -145,6 +162,7 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
         ),
     },
 }
+
 
 component_stages: List[Tuple[PipelineStage, str]] = [
     (PipelineStage.SAMPLE_VIEWS, "<views>"),

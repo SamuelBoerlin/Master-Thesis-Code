@@ -377,6 +377,7 @@ class Pipeline:
                             self.__io.get_output_path(self.__sampler_output_dir),
                             sample_view,
                             image,
+                            frame_dir="visualization/",
                             frame_name=get_frame_name(
                                 pipeline_state.training_views[view_idx], frame_name=f"positions_{i}_{{}}.png"
                             ),
@@ -512,6 +513,7 @@ class Pipeline:
                             self.__io.get_output_path(self.__clustering_output_dir),
                             sample_view,
                             image,
+                            frame_dir="visualization/",
                             frame_name=get_frame_name(
                                 pipeline_state.training_views[view_idx], frame_name=f"clusters_{i}_{{}}.png"
                             ),
@@ -558,6 +560,7 @@ class Pipeline:
                             self.__io.get_output_path(self.__selection_output_dir),
                             sample_view,
                             image,
+                            frame_dir="visualization/",
                             frame_name=get_frame_name(view, frame_name=f"clusters_{i}_{{}}.png"),
                         ),
                         hard_assignments=self.config.render_sample_clusters_hard_assignment,
