@@ -95,14 +95,15 @@ def plot_selected_views_histogram(
     )
 
 
-def embed_selected_views_avg(
+def embed_selected_views(
     lvis: LVISDataset,
     uids: Set[Uid],
     embedder: CachedEmbedder,
     instance: PipelineEvaluationInstance,
     include_duplicates: bool = True,
-) -> Dict[Uid, NDArray]:
-    embeddings: Dict[Uid, NDArray] = dict()
+) -> Tuple[Dict[Uid, NDArray], Dict[Uid, List[NDArray]]]:
+    avg_embeddings: Dict[Uid, NDArray] = dict()
+    all_embeddings: Dict[Uid, List[NDArray]] = dict()
 
     for uid in tqdm(sorted(uids)):
         model_file = Path(lvis.uid_to_file[uid])
@@ -137,17 +138,94 @@ def embed_selected_views_avg(
 
                 avg_embedding_count += 1
 
+                if uid not in all_embeddings:
+                    all_embeddings[uid] = []
+                all_embeddings[uid].append(embedding)
+
             if avg_embedding is not None:
                 avg_embedding /= avg_embedding_count
 
-                embeddings[uid] = avg_embedding
+                avg_embeddings[uid] = avg_embedding
+
+                assert len(all_embeddings[uid]) == avg_embedding_count
 
                 # CONSOLE.log(f"Embedded selected views of {file_link(model_file)}")
 
-    return embeddings
+    return avg_embeddings, all_embeddings
 
 
-def embed_best_views_avg(
+def embed_random_views(
+    lvis: LVISDataset,
+    uids: Set[Uid],
+    embedder: CachedEmbedder,
+    instance: PipelineEvaluationInstance,
+    rng: Generator,
+    number_of_views: int,
+) -> Dict[Uid, NDArray]:
+    avg_embeddings = dict()
+    all_embeddings: Dict[Uid, List[NDArray]] = dict()
+
+    for uid in tqdm(sorted(uids)):
+        selection_rng = np.random.default_rng(seed=rng)
+
+        model_file = Path(lvis.uid_to_file[uid])
+
+        transforms_file = instance.create_pipeline_io(model_file).get_path(
+            PipelineStage.RENDER_VIEWS,
+            Path("renderer") / "transforms.json",
+        )
+
+        if transforms_file.exists() and transforms_file.is_file():
+            _, views, _, _, _, _ = load_transforms_json(transforms_file.parent, set_view_path=True)
+
+            available_image_files = [view.path for view in views if view.path.exists() and view.path.is_file()]
+            random_image_files = []
+
+            for i in range(min(len(available_image_files), number_of_views)):
+                idx = selection_rng.integers(low=0, high=len(available_image_files))
+                random_image_files.append(available_image_files[idx])
+                del available_image_files[idx]
+
+            if len(random_image_files) != number_of_views:
+                CONSOLE.log(
+                    f"[bold yellow]WARNING: Only {len(random_image_files)} views available of {file_link(model_file)} for random selection of {number_of_views} views"
+                )
+                continue
+
+            avg_embedding = None
+            avg_embedding_count = 0
+
+            for image_file in random_image_files:
+                # CONSOLE.log(f"Embedding random view {file_link(image_file)}")
+
+                embedding = embedder.embed_image_numpy(
+                    image_file, cache_key=get_pipeline_render_embedding_cache_key(model_file, image_file)
+                )
+
+                if avg_embedding is None:
+                    avg_embedding = embedding
+                else:
+                    avg_embedding += embedding
+
+                avg_embedding_count += 1
+
+                if uid not in all_embeddings:
+                    all_embeddings[uid] = []
+                all_embeddings[uid].append(embedding)
+
+            if avg_embedding is not None:
+                avg_embedding /= avg_embedding_count
+
+                avg_embeddings[uid] = avg_embedding
+
+                assert len(all_embeddings[uid]) == avg_embedding_count
+
+                # CONSOLE.log(f"Embedded random views of {file_link(model_file)}")
+
+    return avg_embeddings, all_embeddings
+
+
+def embed_best_views(
     lvis: LVISDataset,
     uids: Set[Uid],
     embedder: CachedEmbedder,
@@ -200,70 +278,6 @@ def embed_best_views_avg(
                 embeddings[uid] = best_embedding
 
                 # CONSOLE.log(f"Embedded all views of {file_link(model_file)}")
-
-    return embeddings
-
-
-def embed_random_views_avg(
-    lvis: LVISDataset,
-    uids: Set[Uid],
-    embedder: CachedEmbedder,
-    instance: PipelineEvaluationInstance,
-    rng: Generator,
-    number_of_views: int,
-) -> Dict[Uid, NDArray]:
-    embeddings = dict()
-
-    for uid in tqdm(sorted(uids)):
-        selection_rng = np.random.default_rng(seed=rng)
-
-        model_file = Path(lvis.uid_to_file[uid])
-
-        transforms_file = instance.create_pipeline_io(model_file).get_path(
-            PipelineStage.RENDER_VIEWS,
-            Path("renderer") / "transforms.json",
-        )
-
-        if transforms_file.exists() and transforms_file.is_file():
-            _, views, _, _, _, _ = load_transforms_json(transforms_file.parent, set_view_path=True)
-
-            available_image_files = [view.path for view in views if view.path.exists() and view.path.is_file()]
-            random_image_files = []
-
-            for i in range(min(len(available_image_files), number_of_views)):
-                idx = selection_rng.integers(low=0, high=len(available_image_files))
-                random_image_files.append(available_image_files[idx])
-                del available_image_files[idx]
-
-            if len(random_image_files) != number_of_views:
-                CONSOLE.log(
-                    f"[bold yellow]WARNING: Only {len(random_image_files)} views available of {file_link(model_file)} for random selection of {number_of_views} views"
-                )
-                continue
-
-            avg_embedding = None
-            avg_embedding_count = 0
-
-            for image_file in random_image_files:
-                # CONSOLE.log(f"Embedding random view {file_link(image_file)}")
-
-                embedding = embedder.embed_image_numpy(
-                    image_file, cache_key=get_pipeline_render_embedding_cache_key(model_file, image_file)
-                )
-
-                if avg_embedding is None:
-                    avg_embedding = embedding
-                else:
-                    avg_embedding += embedding
-
-                avg_embedding_count += 1
-
-            if avg_embedding is not None:
-                avg_embedding /= avg_embedding_count
-
-                embeddings[uid] = avg_embedding
-
-                # CONSOLE.log(f"Embedded random views of {file_link(model_file)}")
 
     return embeddings
 

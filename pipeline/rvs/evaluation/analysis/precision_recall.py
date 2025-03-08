@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -11,8 +11,8 @@ from rvs.utils.map import convert_nested_maps_to_tuples, extract_nested_maps, ge
 from rvs.utils.plot import Precision, Recall, grouped_bar_plot, place_legend_outside, precision_recall_plot, save_figure
 
 
-def calculate_similarity_to_category(
-    embeddings: Dict[Method, Dict[Uid, NDArray]],
+def calculate_best_similarity_to_category(
+    embeddings: Dict[Method, Dict[Uid, Union[NDArray, List[NDArray]]]],
     categories_embeddings: Dict[Category, NDArray],
     category_filter: Optional[Set[str]] = None,
 ) -> Dict[Method, Dict[Uid, Dict[Category, float]]]:
@@ -24,13 +24,23 @@ def calculate_similarity_to_category(
         method_similarities: Dict[Uid, Dict[Category, float]] = dict()
 
         for uid in method_embeddings.keys():
-            embedding = method_embeddings[uid]
+            uid_embeddings = method_embeddings[uid]
+
+            if not isinstance(uid_embeddings, List):
+                uid_embeddings = [uid_embeddings]
 
             item_similarities: Dict[Category, float] = dict()
 
             for category, category_embedding in categories_embeddings.items():
                 if category_filter is None or category in category_filter:
-                    item_similarities[category] = np.dot(embedding, category_embedding)
+                    uid_similarities: List[float] = []
+
+                    for embedding in uid_embeddings:
+                        uid_similarities.append(np.dot(embedding, category_embedding))
+
+                    assert len(uid_similarities) > 0
+
+                    item_similarities[category] = max(uid_similarities)
 
             method_similarities[uid] = item_similarities
 
@@ -40,7 +50,7 @@ def calculate_similarity_to_category(
 
 
 def calculate_precision_recall(
-    embeddings: Dict[Method, Dict[Uid, NDArray]],
+    embeddings: Dict[Method, Dict[Uid, Union[NDArray, List[NDArray]]]],
     categories_embeddings: Dict[Category, NDArray],
     ground_truth: Dict[Uid, Category],
     category_filter: Optional[Set[str]] = None,
@@ -54,7 +64,7 @@ def calculate_precision_recall(
 
     uids = get_keys_of_nested_maps(embeddings)
 
-    scores = calculate_similarity_to_category(embeddings, categories_embeddings)
+    scores = calculate_best_similarity_to_category(embeddings, categories_embeddings)
 
     category_sizes = {
         category: count_category_items(ground_truth, uids, category) for category in categories_embeddings.keys()

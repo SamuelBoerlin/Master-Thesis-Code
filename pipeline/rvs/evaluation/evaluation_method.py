@@ -29,9 +29,9 @@ from rvs.evaluation.analysis.utils import count_category_items
 from rvs.evaluation.analysis.views import (
     calculate_selected_views_avg_per_category,
     calculte_selected_views_histogram_per_category,
-    embed_best_views_avg,
-    embed_random_views_avg,
-    embed_selected_views_avg,
+    embed_best_views,
+    embed_random_views,
+    embed_selected_views,
     plot_selected_views_avg_per_category,
     plot_selected_views_histogram,
     plot_selected_views_samples,
@@ -59,7 +59,7 @@ def evaluate_results(
     number_of_views = 3  # FIXME: This should come from the config
 
     CONSOLE.rule("Embedding selected views...")
-    avg_selected_views_embeddings = embed_selected_views_avg(
+    avg_selected_views_embeddings, all_selected_views_embeddings = embed_selected_views(
         lvis,
         available_uids,
         embedder,
@@ -68,7 +68,7 @@ def evaluate_results(
     available_uids = avg_selected_views_embeddings.keys()
 
     CONSOLE.rule("Embedding random views...")
-    avg_random_views_embeddings = embed_random_views_avg(
+    avg_random_views_embeddings, all_random_views_embeddings = embed_random_views(
         lvis,
         available_uids,
         embedder,
@@ -79,7 +79,7 @@ def evaluate_results(
     available_uids = avg_selected_views_embeddings.keys()
 
     CONSOLE.rule("Embedding best views w.r.t. ground truth...")
-    best_views_embeddings = embed_best_views_avg(
+    best_views_embeddings = embed_best_views(
         lvis,
         available_uids,
         embedder,
@@ -122,6 +122,8 @@ def evaluate_results(
             f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
             f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
             "Method 3: Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
+            f"Method 4: Best Embedding of Selected Views w.r.t. Query ($N \leq {number_of_views}$)": all_selected_views_embeddings,
+            f"Method 5: Best Embedding of Random Views w.r.t. Query ($N = {number_of_views}$)": all_random_views_embeddings,
         },
         categories_embeddings,
         lvis.uid_to_category,
