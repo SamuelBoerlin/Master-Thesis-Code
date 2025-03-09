@@ -28,6 +28,7 @@ from rvs.evaluation.analysis.similarity import (
 from rvs.evaluation.analysis.utils import count_category_items
 from rvs.evaluation.analysis.views import (
     calculate_selected_views_avg_per_category,
+    calculate_views_histogram_avg,
     calculte_selected_views_histogram_per_category,
     embed_best_views,
     embed_random_views,
@@ -39,6 +40,7 @@ from rvs.evaluation.analysis.views import (
 from rvs.evaluation.embedder import CachedEmbedder
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
+from rvs.utils.random import discrete_distribution
 
 
 def evaluate_results(
@@ -56,7 +58,29 @@ def evaluate_results(
         for uid in lvis.dataset[category]:
             available_uids.add(uid)
 
-    number_of_views = 3  # FIXME: This should come from the config
+    CONSOLE.rule("Calculate number of selected views...")
+    avg_number_of_views_per_category = calculate_selected_views_avg_per_category(lvis, available_uids, instance)
+    histogram_of_views_per_category = calculte_selected_views_histogram_per_category(lvis, available_uids, instance)
+
+    min_number_of_views: int = None
+    max_number_of_views: int = None
+    for histogram in histogram_of_views_per_category.values():
+        nonzero_i = np.nonzero(histogram)[0]
+        if nonzero_i.shape[0] > 0:
+            if min_number_of_views is None:
+                min_number_of_views = nonzero_i[0]
+            else:
+                min_number_of_views = min(min_number_of_views, nonzero_i[0])
+            if max_number_of_views is None:
+                max_number_of_views = nonzero_i[-1]
+            else:
+                max_number_of_views = max(max_number_of_views, nonzero_i[-1])
+    if min_number_of_views is None or max_number_of_views is None:
+        min_number_of_views = 0
+        max_number_of_views = 0
+
+    # avg_number_of_views = np.average([value for _, value in avg_number_of_views_per_category.items()])
+    avg_histogram_of_views = calculate_views_histogram_avg(histogram_of_views_per_category)
 
     CONSOLE.rule("Embedding selected views...")
     avg_selected_views_embeddings, all_selected_views_embeddings = embed_selected_views(
@@ -67,16 +91,16 @@ def evaluate_results(
     )
     available_uids = avg_selected_views_embeddings.keys()
 
-    CONSOLE.rule("Embedding random views...")
-    avg_random_views_embeddings, all_random_views_embeddings = embed_random_views(
+    CONSOLE.rule("Embedding equivalent distribution of random views...")
+    avg_equiv_random_views_embeddings, all_equiv_random_views_embeddings = embed_random_views(
         lvis,
         available_uids,
         embedder,
         instance,
         np.random.default_rng(seed=seed),
-        number_of_views,
+        discrete_distribution(np.arange(avg_histogram_of_views.shape[0]), avg_histogram_of_views),
     )
-    available_uids = avg_selected_views_embeddings.keys()
+    available_uids = avg_equiv_random_views_embeddings.keys()
 
     CONSOLE.rule("Embedding best views w.r.t. ground truth...")
     best_views_embeddings = embed_best_views(
@@ -92,26 +116,22 @@ def evaluate_results(
     avg_number_of_clusters_per_category = calculate_clusters_avg_per_category(lvis, available_uids, instance)
     histogram_of_clusters_per_category = calculte_clusters_histogram_per_category(lvis, available_uids, instance)
 
-    CONSOLE.rule("Calculate number of selected views...")
-    avg_number_of_views_per_category = calculate_selected_views_avg_per_category(lvis, available_uids, instance)
-    histogram_of_views_per_category = calculte_selected_views_histogram_per_category(lvis, available_uids, instance)
-
     CONSOLE.rule("Calculate similarities...")
     similarities = calculate_similarity_to_ground_truth(
         lvis,
         {
-            f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
-            f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
-            "Method 3: Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
+            f"Average Embedding of Selected Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_selected_views_embeddings,
+            f"Average Embedding of Random Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_equiv_random_views_embeddings,
+            "Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
         },
         categories_embeddings,
     )
     cross_similarities = calculate_avg_similarity_between_all_models_and_category_ground_truths(
         lvis,
         {
-            f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
-            f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
-            "Method 3: Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
+            f"Average Embedding of Selected Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_selected_views_embeddings,
+            f"Average Embedding of Random Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_equiv_random_views_embeddings,
+            "Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
         },
         categories_embeddings,
     )
@@ -119,11 +139,11 @@ def evaluate_results(
     CONSOLE.rule("Calculate precision/recall...")
     precision_recall = calculate_precision_recall(
         {
-            f"Method 1: Average Embedding of Selected Views ($N \leq {number_of_views}$)": avg_selected_views_embeddings,
-            f"Method 2: Average Embedding of Random Views ($N = {number_of_views}$)": avg_random_views_embeddings,
-            "Method 3: Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
-            f"Method 4: Best Embedding of Selected Views w.r.t. Query ($N \leq {number_of_views}$)": all_selected_views_embeddings,
-            f"Method 5: Best Embedding of Random Views w.r.t. Query ($N = {number_of_views}$)": all_random_views_embeddings,
+            f"Average Embedding of Selected Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_selected_views_embeddings,
+            f"Best Embedding of Selected Views w.r.t. Query (${min_number_of_views} \leq N \leq {max_number_of_views}$)": all_selected_views_embeddings,
+            f"Average Embedding of Random Views ($N = (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_equiv_random_views_embeddings,
+            f"Best Embedding of Random Views w.r.t. Query (${min_number_of_views} \leq N \leq {max_number_of_views}$)": all_equiv_random_views_embeddings,
+            "Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
         },
         categories_embeddings,
         lvis.uid_to_category,

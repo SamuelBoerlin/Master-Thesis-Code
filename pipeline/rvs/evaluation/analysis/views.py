@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -24,6 +24,7 @@ from rvs.utils.cache import get_pipeline_render_embedding_cache_key
 from rvs.utils.console import file_link
 from rvs.utils.nerfstudio import load_transforms_json
 from rvs.utils.plot import image_grid_plot, measure_artist, measure_figure, save_figure
+from rvs.utils.random import derive_rng, random_seed_bytes
 
 
 def count_selected_views(
@@ -61,6 +62,26 @@ def calculte_selected_views_histogram_per_category(
     instance: PipelineEvaluationInstance,
 ) -> Dict[Category, NDArray]:
     return calculate_discrete_histogram_per_category(lvis, count_selected_views(lvis, uids, instance))
+
+
+def calculate_views_histogram_avg(histograms: Dict[Category, NDArray]) -> NDArray:
+    max_size = 0
+    count = 0
+
+    for histogram in histograms.values():
+        max_size = max(max_size, histogram.shape[0])
+        count += 1
+
+    avg_histogram = np.zeros((max_size,))
+
+    if count > 0:
+        for histogram in histograms.values():
+            for i in range(histogram.shape[0]):
+                avg_histogram[i] += histogram[i]
+
+        avg_histogram /= count
+
+    return avg_histogram
 
 
 def plot_selected_views_avg_per_category(
@@ -160,13 +181,17 @@ def embed_random_views(
     embedder: CachedEmbedder,
     instance: PipelineEvaluationInstance,
     rng: Generator,
-    number_of_views: int,
+    number_of_views_distribution: Callable[[Generator], int],
 ) -> Dict[Uid, NDArray]:
     avg_embeddings = dict()
     all_embeddings: Dict[Uid, List[NDArray]] = dict()
 
+    base_seed = random_seed_bytes(rng)
+
     for uid in tqdm(sorted(uids)):
-        selection_rng = np.random.default_rng(seed=rng)
+        selection_rng = derive_rng(base_seed, uid.encode())
+
+        number_of_views = number_of_views_distribution(selection_rng)
 
         model_file = Path(lvis.uid_to_file[uid])
 
