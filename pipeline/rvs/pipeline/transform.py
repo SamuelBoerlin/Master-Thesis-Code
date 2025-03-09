@@ -1,12 +1,16 @@
+import json
 from dataclasses import dataclass, field
 from typing import Dict, Tuple, Type
 
 import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib.ticker import MaxNLocator
 from nerfstudio.configs.base_config import InstantiateConfig
 from numpy.typing import NDArray
 from sklearn.decomposition import PCA
 
 from rvs.pipeline.state import PipelineState
+from rvs.utils.plot import save_figure
 
 
 @dataclass
@@ -71,7 +75,32 @@ class SKLearnPCATransform(Transform):
 
     def create(self, samples: NDArray, pipeline_state: PipelineState) -> Dict[str, NDArray]:
         pca = self._setup_pca()
+
         pca.fit(samples)
+
+        if pipeline_state.scratch_output_dir is not None:
+            explained_variance = np.cumsum(pca.explained_variance_ratio_)
+
+            variance_json_file = pipeline_state.scratch_output_dir / "variance.json"
+            with variance_json_file.open("w") as f:
+                json.dump(explained_variance.tolist(), f)
+
+            x = np.arange(explained_variance.shape[0]) + 1
+            y = explained_variance
+
+            fig, ax = plt.subplots()
+
+            ax.set_title("PCA Explained Variance Ratio")
+
+            ax.plot(x, y)
+
+            ax.set_xlabel("Number of Principal Components")
+            ax.get_xaxis().set_major_locator(MaxNLocator(nbins="auto", integer=True))
+
+            ax.set_ylabel("Cumulative Explained Variance Ratio")
+
+            save_figure(fig, pipeline_state.scratch_output_dir / "variance.png")
+
         return {"mean": pca.mean_, "components": pca.components_}
 
     def _parse_parameters(self, parameters: Dict[str, NDArray]) -> Tuple[NDArray, NDArray]:
