@@ -31,6 +31,7 @@ def count_selected_views(
     lvis: LVISDataset,
     uids: Set[Uid],
     instance: PipelineEvaluationInstance,
+    skip_validation: bool = False,
 ) -> Dict[Uid, int]:
     counts: Dict[Uid, int] = dict()
 
@@ -40,7 +41,7 @@ def count_selected_views(
         index_file = instance.get_index_file(model_file)
 
         try:
-            images, _ = load_index(index_file)
+            images, _ = load_index(index_file, validate=not skip_validation)
             counts[uid] = len(set(images))
         except Exception:
             pass
@@ -52,16 +53,20 @@ def calculate_selected_views_avg_per_category(
     lvis: LVISDataset,
     uids: Set[Uid],
     instance: PipelineEvaluationInstance,
+    skip_validation: bool = False,
 ) -> Dict[Category, float]:
-    return calculate_avg_per_category(lvis, count_selected_views(lvis, uids, instance))
+    return calculate_avg_per_category(lvis, count_selected_views(lvis, uids, instance, skip_validation=skip_validation))
 
 
 def calculte_selected_views_histogram_per_category(
     lvis: LVISDataset,
     uids: Set[Uid],
     instance: PipelineEvaluationInstance,
+    skip_validation: bool = False,
 ) -> Dict[Category, NDArray]:
-    return calculate_discrete_histogram_per_category(lvis, count_selected_views(lvis, uids, instance))
+    return calculate_discrete_histogram_per_category(
+        lvis, count_selected_views(lvis, uids, instance, skip_validation=skip_validation)
+    )
 
 
 def calculate_views_histogram_avg(histograms: Dict[Category, NDArray]) -> NDArray:
@@ -122,6 +127,7 @@ def embed_selected_views(
     embedder: CachedEmbedder,
     instance: PipelineEvaluationInstance,
     include_duplicates: bool = True,
+    skip_validation: bool = False,
 ) -> Tuple[Dict[Uid, NDArray], Dict[Uid, List[NDArray]]]:
     avg_embeddings: Dict[Uid, NDArray] = dict()
     all_embeddings: Dict[Uid, List[NDArray]] = dict()
@@ -134,7 +140,7 @@ def embed_selected_views(
         images: List[Path] = None
 
         try:
-            images, _ = load_index(index_file)
+            images, _ = load_index(index_file, validate=not skip_validation)
         except Exception:
             pass
 
@@ -316,6 +322,7 @@ def plot_selected_views_samples(
     number_of_views: int,
     file: Path,
     category_names: Optional[Dict[Category, str]] = None,
+    skip_validation: bool = False,
 ) -> None:
     category_name = category_names[category] if category_names is not None else category
 
@@ -333,7 +340,7 @@ def plot_selected_views_samples(
                 index_file = instance.get_index_file(model_file)
 
                 try:
-                    selected_views, _ = load_index(index_file)
+                    selected_views, _ = load_index(index_file, validate=not skip_validation)
                     for view in selected_views:
                         all_views.append((view, uid))
                 except Exception:

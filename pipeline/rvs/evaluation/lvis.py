@@ -165,3 +165,49 @@ class LVISDataset:
         if self.__category_names is not None and category in self.__category_names:
             return self.__category_names[category]
         return category
+
+
+def create_dataset(
+    lvis_categories: Optional[Set[str]] = None,
+    lvis_categories_file: Optional[Path] = None,
+    lvis_uids: Optional[Set[str]] = None,
+    lvis_uids_file: Optional[Path] = None,
+    lvis_download_processes: int = 4,
+    lvis_per_category_limit: Optional[int] = None,
+    lvis_category_names: Optional[Dict[str, str]] = None,
+    lvis_category_names_file: Optional[Path] = None,
+) -> LVISDataset:
+    if lvis_categories is not None:
+        lvis_categories = set(lvis_categories)
+
+    if lvis_uids is not None:
+        lvis_uids = set(lvis_uids)
+
+    if lvis_category_names is not None:
+        lvis_category_names = dict(lvis_category_names)
+
+    if lvis_categories_file is not None:
+        if lvis_categories is None:
+            lvis_categories = set()
+        with lvis_categories_file.open("r") as f:
+            lvis_categories = lvis_categories.union(set(json.load(f)))
+
+    if lvis_uids_file is not None:
+        if lvis_uids is None:
+            lvis_uids = set()
+        with lvis_uids_file.open("r") as f:
+            lvis_uids = lvis_uids.union(set(json.load(f)))
+
+    if lvis_category_names_file is not None:
+        if lvis_category_names is None:
+            lvis_category_names = dict()
+        with lvis_category_names_file.open("r") as f:
+            lvis_category_names.update(json.load(f))
+
+    return LVISDataset(
+        lvis_categories,
+        lvis_uids,
+        lvis_download_processes=lvis_download_processes,
+        per_category_limit=lvis_per_category_limit,
+        category_names=lvis_category_names,
+    )

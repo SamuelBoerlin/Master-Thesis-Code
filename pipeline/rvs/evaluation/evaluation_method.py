@@ -40,6 +40,7 @@ from rvs.evaluation.analysis.views import (
 from rvs.evaluation.embedder import CachedEmbedder
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
+from rvs.utils.cache import get_evaluation_prompt_embedding_cache_key
 from rvs.utils.random import discrete_distribution
 
 
@@ -49,6 +50,7 @@ def evaluate_results(
     instance: PipelineEvaluationInstance,
     seed: int,
     output_dir: Path,
+    skip_validation: bool,
 ) -> None:
     CONSOLE.rule("Embedding prompts for categories...")
     categories_embeddings = embed_categories(lvis.dataset.keys(), lvis, embedder)
@@ -59,8 +61,12 @@ def evaluate_results(
             available_uids.add(uid)
 
     CONSOLE.rule("Calculate number of selected views...")
-    avg_number_of_views_per_category = calculate_selected_views_avg_per_category(lvis, available_uids, instance)
-    histogram_of_views_per_category = calculte_selected_views_histogram_per_category(lvis, available_uids, instance)
+    avg_number_of_views_per_category = calculate_selected_views_avg_per_category(
+        lvis, available_uids, instance, skip_validation=skip_validation
+    )
+    histogram_of_views_per_category = calculte_selected_views_histogram_per_category(
+        lvis, available_uids, instance, skip_validation=skip_validation
+    )
 
     min_number_of_views: int = None
     max_number_of_views: int = None
@@ -88,6 +94,7 @@ def evaluate_results(
         available_uids,
         embedder,
         instance,
+        skip_validation=skip_validation,
     )
     available_uids = avg_selected_views_embeddings.keys()
 
@@ -234,6 +241,7 @@ def evaluate_results(
             np.random.default_rng(seed=seed),
             5 * 5,
             output_dir / "views" / f"{category}.png",
+            skip_validation=skip_validation,
         )
 
 
@@ -245,11 +253,13 @@ def embed_categories(
     for category in tqdm(categories):
         prompt = category_name_to_embedding_prompt(category, lvis)
         CONSOLE.log(f"Embedding category '{category}' as '{prompt}'")
-        embeddings[category] = embedder.embed_text_numpy(prompt)
+        embeddings[category] = embedder.embed_text_numpy(
+            prompt, cache_key=get_evaluation_prompt_embedding_cache_key(prompt)
+        )
 
     return embeddings
 
 
-def category_name_to_embedding_prompt(category: Category, lvis: LVISDataset) -> None:
+def category_name_to_embedding_prompt(category: Category, lvis: LVISDataset) -> str:
     category_name = lvis.get_category_name(category).replace("_", " ")
     return f"a photo of a {category_name}."

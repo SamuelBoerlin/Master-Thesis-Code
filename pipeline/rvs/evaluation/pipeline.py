@@ -162,12 +162,15 @@ class PipelineEvaluationInstance:
     def get_index_file(self, file: Path) -> Path:
         return self.get_results_dir(file) / INDEX_FILE_NAME
 
-    def create_pipeline_config(self, file: Path, stages_filter: Optional[Set[PipelineStage]] = None) -> PipelineConfig:
+    def create_pipeline_config(
+        self, file: Path, stages_filter: Optional[Set[PipelineStage]] = None, derived_seed: bool = True
+    ) -> PipelineConfig:
         return PipelineEvaluationInstance.configure_pipeline(
             self.config,
             self.pipeline_dir,
             file,
             self.get_pipeline_stages(stages_filter),
+            derived_seed=derived_seed,
         )
 
     def create_pipeline_io(self, file: Path, stages_filter: Optional[Set[PipelineStage]] = None) -> PipelineIO:
@@ -177,10 +180,10 @@ class PipelineEvaluationInstance:
             input_dirs = []
 
             for input_pipeline in self.input_pipelines:
-                input_pipeline_config = input_pipeline.create_pipeline_config(file)
+                input_pipeline_config = input_pipeline.create_pipeline_config(file, derived_seed=False)
                 input_dirs.append(input_pipeline_config.get_base_dir())
 
-        return self.create_pipeline_config(file, stages_filter).create_io(input_dirs)
+        return self.create_pipeline_config(file, stages_filter=stages_filter, derived_seed=False).create_io(input_dirs)
 
     @staticmethod
     def configure_pipeline(
@@ -197,8 +200,6 @@ class PipelineEvaluationInstance:
 
         config.set_timestamp()
 
-        _set_random_seed(config.machine.seed)
-
         return config
 
     @staticmethod
@@ -213,6 +214,8 @@ class PipelineEvaluationInstance:
         pipeline: Pipeline = PipelineEvaluationInstance.configure_pipeline(
             config, output_dir, file, stages, derived_seed=derived_seed
         ).setup(local_rank=0, world_size=1)
+
+        _set_random_seed(pipeline.config.machine.seed)
 
         pipeline.init(input_dirs=input_dirs)
 

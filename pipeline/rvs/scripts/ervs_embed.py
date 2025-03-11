@@ -14,8 +14,10 @@ from nerfstudio.utils.rich_utils import CONSOLE
 
 from rvs.evaluation.embedder import CachedEmbedder, Embedder, EmbedderConfig
 from rvs.evaluation.evaluation import EvaluationConfig
+from rvs.evaluation.evaluation_method import category_name_to_embedding_prompt
+from rvs.evaluation.lvis import create_dataset
 from rvs.pipeline.pipeline import PipelineConfig
-from rvs.utils.cache import get_pipeline_render_embedding_cache_key
+from rvs.utils.cache import get_evaluation_prompt_embedding_cache_key, get_pipeline_render_embedding_cache_key
 from rvs.utils.config import find_config_working_dir, load_config
 from rvs.utils.console import file_link
 
@@ -184,11 +186,46 @@ class EvaluationRendersCommand(Command):
             os.chdir(working_dir)
 
 
+@dataclass
+class EvaluationCategoryPromptsCommand(Command):
+    config: Path = tyro.MISSING
+
+    output_dir: Path = tyro.MISSING
+
+    def _run(self, embedder: Embedder) -> None:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        eval_config = load_config(self.config, EvaluationConfig)
+
+        lvis = create_dataset(
+            lvis_categories=eval_config.lvis_categories,
+            lvis_categories_file=eval_config.lvis_categories_file,
+            lvis_uids=eval_config.lvis_uids,
+            lvis_uids_file=eval_config.lvis_uids_file,
+            lvis_download_processes=eval_config.lvis_download_processes,
+            lvis_per_category_limit=eval_config.lvis_per_category_limit,
+            lvis_category_names=eval_config.lvis_category_names,
+            lvis_category_names_file=eval_config.lvis_category_names_file,
+        )
+
+        for category in lvis.categories:
+            prompt = category_name_to_embedding_prompt(category, lvis)
+
+            cache_object_file = self.output_dir / f"{get_evaluation_prompt_embedding_cache_key(prompt)}.json"
+
+            CachedEmbedder.create_text_cache_file(
+                cache_object_file, prompt, embedder.config, embedder.embed_text_numpy(prompt)
+            )
+
+            CONSOLE.log(f"Embedded '{prompt}' (category: {category}) -> {file_link(cache_object_file)}")
+
+
 commands = {
     "text": TextCommand(),
     "image": ImageCommand(),
     "pipeline_renders": PipelineRendersCommand(),
     "evaluation_renders": EvaluationRendersCommand(),
+    "evaluation_category_prompts": EvaluationCategoryPromptsCommand(),
 }
 
 SubcommandTypeUnion = tyro.conf.SuppressFixed[

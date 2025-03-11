@@ -189,7 +189,10 @@ class CachedEmbedder(Embedder):
         if self.__text_cache_required:
             raise ValueError(f"{cache_key} not cached")
 
-        return self.__parent.embed_text(text)
+        try:
+            return self.__parent.embed_text(text)
+        except NotImplementedError:
+            raise ValueError(f"{cache_key} not cached")
 
     def embed_text_numpy(self, text: str, cache_key: Optional[str] = None) -> NDArray:
         cached = self.__load_cached_ndarray(cache_key, lambda: hash_text_sha1(text))
@@ -199,7 +202,10 @@ class CachedEmbedder(Embedder):
         if self.__text_cache_required:
             raise ValueError(f"{cache_key} not cached")
 
-        return self.__parent.embed_text_numpy(text)
+        try:
+            return self.__parent.embed_text_numpy(text)
+        except NotImplementedError:
+            raise ValueError(f"{cache_key} not cached")
 
     def embed_image(self, file: Path, cache_key: Optional[str] = None) -> Tensor:
         cached = self.__load_cached_tensor(cache_key, lambda: hash_file_sha1(file))
@@ -209,7 +215,10 @@ class CachedEmbedder(Embedder):
         if self.__image_cache_required:
             raise ValueError(f"{cache_key} not cached")
 
-        return self.__parent.embed_image(file)
+        try:
+            return self.__parent.embed_image(file)
+        except NotImplementedError:
+            raise ValueError(f"{cache_key} not cached")
 
     def embed_image_numpy(self, file: Path, cache_key: Optional[str] = None) -> NDArray:
         cached = self.__load_cached_ndarray(cache_key, lambda: hash_file_sha1(file))
@@ -219,7 +228,10 @@ class CachedEmbedder(Embedder):
         if self.__image_cache_required:
             raise ValueError(f"{cache_key} not cached")
 
-        return self.__parent.embed_image_numpy(file)
+        try:
+            return self.__parent.embed_image_numpy(file)
+        except NotImplementedError:
+            raise ValueError(f"{cache_key} not cached")
 
     def __load_cached_ndarray(self, cache_key: Optional[str], hash_func: Callable[[], str]) -> Optional[NDArray]:
         if self.__cache_dir is None or cache_key is None:
@@ -256,3 +268,26 @@ class CachedEmbedder(Embedder):
             return None
 
         return torch.from_numpy(value).unsqueeze(0).to(self.config.device)
+
+
+class NoopEmbedder(Embedder):
+    __config: EmbedderConfig
+
+    @Embedder.config.getter
+    def config(self) -> EmbedderConfig:
+        return self.__config
+
+    def __init__(self, config: EmbedderConfig) -> None:
+        self.__config = config
+
+    def embed_text(self, text: str) -> Tensor:
+        raise NotImplementedError("Embedder not implemented, cache required")
+
+    def embed_text_numpy(self, text: str) -> NDArray:
+        raise NotImplementedError("Embedder not implemented, cache required")
+
+    def embed_image(self, file: Path) -> Tensor:
+        raise NotImplementedError("Embedder not implemented, cache required")
+
+    def embed_image_numpy(self, file: Path) -> NDArray:
+        raise NotImplementedError("Embedder not implemented, cache required")

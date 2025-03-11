@@ -1,4 +1,3 @@
-import json
 import threading
 import traceback
 from collections import deque
@@ -17,10 +16,10 @@ from nerfstudio.configs.base_config import InstantiateConfig, PrintableConfig
 from nerfstudio.utils.rich_utils import CONSOLE
 from torch.multiprocessing import Process
 
-from rvs.evaluation.embedder import CachedEmbedder, EmbedderConfig
+from rvs.evaluation.embedder import CachedEmbedder, Embedder, EmbedderConfig, NoopEmbedder
 from rvs.evaluation.evaluation_method import evaluate_results
 from rvs.evaluation.index import load_index
-from rvs.evaluation.lvis import LVISDataset, Uid
+from rvs.evaluation.lvis import LVISDataset, Uid, create_dataset
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.evaluation.worker import pipeline_worker_func
 from rvs.pipeline.pipeline import PipelineConfig
@@ -66,6 +65,12 @@ class RuntimeSettings(PrintableConfig):
 
     threads: int = 1
     """Number of threads for running the pipelines or pipeline stages"""
+
+    skip_validation: bool = False
+    """Whether to skip validation steps"""
+
+    skip_embedder: bool = False
+    """Whether to skip setting up embedder (requires cache)"""
 
 
 @dataclass
@@ -222,11 +227,20 @@ class Evaluation:
         if self.config.runtime.partial_results or PipelineStage.OUTPUT in PipelineStage.between(
             self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
         ):
-            CONSOLE.log("Setting up embedder...")
+            base_embedder: Embedder = None
+            if self.config.runtime.skip_embedder or (
+                self.config.embedder_image_cache_required and self.config.embedder_text_cache_required
+            ):
+                CONSOLE.log("Setting up cache-only embedder...")
+                base_embedder = NoopEmbedder(self.config.embedder)
+            else:
+                CONSOLE.log("Setting up embedder...")
+                base_embedder = self.config.embedder.setup()
+            assert base_embedder is not None
             self.embedder = CachedEmbedder(
-                self.config.embedder.setup(),
+                base_embedder,
                 self.config.embedder_cache_dir,
-                validate_hash=self.config.embedder_cache_validation,
+                validate_hash=self.config.embedder_cache_validation and not self.config.runtime.skip_validation,
                 image_cache_required=self.config.embedder_image_cache_required,
                 text_cache_required=self.config.embedder_text_cache_required,
             )
@@ -235,33 +249,15 @@ class Evaluation:
 
         CONSOLE.log("Setting up dataset...")
 
-        lvis_categories = self.config.lvis_categories
-        if self.config.lvis_categories_file is not None:
-            if lvis_categories is None:
-                lvis_categories = set()
-            with self.config.lvis_categories_file.open("r") as f:
-                lvis_categories = lvis_categories.union(set(json.load(f)))
-
-        lvis_uids = self.config.lvis_uids
-        if self.config.lvis_uids_file is not None:
-            if lvis_uids is None:
-                lvis_uids = set()
-            with self.config.lvis_uids_file.open("r") as f:
-                lvis_uids = lvis_uids.union(set(json.load(f)))
-
-        category_names = self.config.lvis_category_names
-        if self.config.lvis_category_names_file is not None:
-            if category_names is None:
-                category_names = dict()
-            with self.config.lvis_category_names_file.open("r") as f:
-                category_names.update(json.load(f))
-
-        self.lvis = LVISDataset(
-            lvis_categories,
-            lvis_uids,
+        self.lvis = create_dataset(
+            lvis_categories=self.config.lvis_categories,
+            lvis_categories_file=self.config.lvis_categories_file,
+            lvis_uids=self.config.lvis_uids,
+            lvis_uids_file=self.config.lvis_uids_file,
             lvis_download_processes=self.config.lvis_download_processes,
-            per_category_limit=self.config.lvis_per_category_limit,
-            category_names=category_names,
+            lvis_per_category_limit=self.config.lvis_per_category_limit,
+            lvis_category_names=self.config.lvis_category_names,
+            lvis_category_names_file=self.config.lvis_category_names_file,
         )
 
         if self.lvis.load_cache(self.lvis_cache_dir) is None:
@@ -418,6 +414,7 @@ class Evaluation:
                     run.instance,
                     self.config.seed,
                     self.results_dir,
+                    skip_validation=self.config.runtime.skip_validation,
                 )
 
             return not aborted
