@@ -100,7 +100,7 @@ def plot_avg_precision_recall_auc(file: Path, evals: List[Eval], category: Optio
 
     fig, ax = plt.subplots(layout="constrained")
 
-    ax.set_title("Average PR AUC")
+    ax.set_title("Average Area Under the Precision Recall Curve")
 
     comparison_grid_plot(
         fig,
@@ -108,7 +108,7 @@ def plot_avg_precision_recall_auc(file: Path, evals: List[Eval], category: Optio
         values,
         xlabels=[eval.name for eval in evals],
         ylabels=list(methods.keys()),
-        colorbarlabel="Average PR AUC",
+        colorbar_label="Average PR AUC",
     )
 
     save_figure(fig, file)

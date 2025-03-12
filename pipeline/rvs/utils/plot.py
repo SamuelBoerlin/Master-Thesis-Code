@@ -429,9 +429,11 @@ def comparison_grid_plot(
     values: NDArray,
     xlabels: List[str],
     ylabels: List[str],
-    colorbarlabel: Optional[str] = None,
+    colorbar_label: Optional[str] = None,
+    colorbar_orientation: str = "vertical",
     value_format: str = "{0:.2f}",
     inches_per_column: Optional[float] = 0.5,
+    inches_per_row: Optional[float] = None,
 ) -> None:
     if len(ylabels) != values.shape[0]:
         raise ValueError("len(ylabels) != values.shape[0]")
@@ -442,11 +444,25 @@ def comparison_grid_plot(
     if inches_per_column is not None:
         fig.set_size_inches([fig.get_size_inches()[0] + inches_per_column * values.shape[1], fig.get_size_inches()[1]])
 
+    if inches_per_row is not None:
+        fig.set_size_inches([fig.get_size_inches()[0], fig.get_size_inches()[1] + inches_per_row * values.shape[0]])
+
     image = ax.imshow(values)
 
-    cbar = fig.colorbar(image, ax=ax, fraction=0.0492 * values.shape[0] / values.shape[1], pad=0.04)
-    if colorbarlabel is not None:
-        cbar.ax.set_ylabel(colorbarlabel, rotation=-90, va="bottom")
+    if colorbar_orientation == "vertical":
+        aspect = float(values.shape[0]) / values.shape[1]
+        cbar = fig.colorbar(
+            image,
+            ax=ax,
+            fraction=0.0492 * aspect,
+            pad=0.04 * aspect,
+        )
+        if colorbar_label is not None:
+            cbar.ax.set_ylabel(colorbar_label, rotation=-90, va="bottom")
+    elif colorbar_orientation == "horizontal":
+        cbar = fig.colorbar(image, ax=ax, orientation="horizontal", location="top")
+        if colorbar_label is not None:
+            cbar.ax.set_ylabel(colorbar_label, rotation=0, va="center", ha="right")
 
     ax.set_xticks(range(values.shape[1]), labels=xlabels, rotation=30, ha="right", rotation_mode="anchor")
     ax.set_yticks(range(values.shape[0]), labels=ylabels)
