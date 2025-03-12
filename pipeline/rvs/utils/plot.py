@@ -156,11 +156,55 @@ def precision_recall_plot(
     xlabel: str = None,
     ylabel: str = None,
     legend_loc: Union[str, int] = None,
+    markers: Optional[str] = "ov^+xD*",
+    marker_sizes: List[float] = [10, 9, 9, 8, 8, 11, 6],
+    fillstyle: str = "none",
+    alpha: float = 0.8,
 ) -> None:
+    zoffsets: NDArray = np.zeros((len(marker_sizes),))
+
+    if markers is not None:
+        if len(markers) != len(marker_sizes):
+            raise ValueError("len(markers) != len(marker_sizes)")
+
+        sorted_indices = np.argsort(marker_sizes)
+        for i in range(sorted_indices.shape[0]):
+            idx = sorted_indices[i]
+            zoffsets[idx] = 1.0 - float(i) / sorted_indices.shape[0]
+
+    mi = 0
+
+    zoffset = 0.0
+
     for label in values.keys():
         ys, xs, *_ = values[label]
 
-        ax.plot(xs, ys, "-o")
+        marker = "o"
+        marker_size = 13
+
+        if markers is not None:
+            marker = markers[mi]
+            marker_size = marker_sizes[mi]
+
+            zoffset = zoffsets[mi]
+
+            mi += 1
+            if mi >= len(markers):
+                mi = 0
+                zoffsets += 1.0
+        else:
+            zoffset += 1.0
+
+        ax.plot(
+            xs,
+            ys,
+            "-" + marker,
+            alpha=alpha,
+            fillstyle=fillstyle,
+            markersize=marker_size,
+            markeredgewidth=2,
+            zorder=zoffset,
+        )
 
     if xlabel is not None:
         ax.set_xlabel(xlabel)

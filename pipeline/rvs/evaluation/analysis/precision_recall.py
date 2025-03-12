@@ -169,7 +169,10 @@ def plot_precision_recall(
             values=extract_nested_maps(precision_recall, category),
             xlabel="Recall",
             ylabel="Precision",
+            legend_loc="upper left",
         )
+
+        place_legend_outside(ax)
 
     fig.tight_layout()
 
