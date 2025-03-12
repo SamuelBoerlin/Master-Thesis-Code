@@ -8,6 +8,7 @@ from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.cm import get_cmap
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import MaxNLocator
 from matplotlib.transforms import Bbox
@@ -160,6 +161,7 @@ def precision_recall_plot(
     marker_sizes: List[float] = [10, 9, 9, 8, 8, 11, 6],
     fillstyle: str = "none",
     alpha: float = 0.8,
+    fill_alpha: float = 0.05,
 ) -> None:
     zoffsets: NDArray = np.zeros((len(marker_sizes),))
 
@@ -176,8 +178,13 @@ def precision_recall_plot(
 
     zoffset = 0.0
 
+    lines: List[Tuple[Line2D, Recall, Precision]] = []
+
     for label in values.keys():
         ys, xs, *_ = values[label]
+
+        xs = np.insert(xs, 0, 0.0)
+        ys = np.insert(ys, 0, 1.0)
 
         marker = "o"
         marker_size = 13
@@ -195,7 +202,7 @@ def precision_recall_plot(
         else:
             zoffset += 1.0
 
-        ax.plot(
+        line = ax.plot(
             xs,
             ys,
             "-" + marker,
@@ -204,15 +211,26 @@ def precision_recall_plot(
             markersize=marker_size,
             markeredgewidth=2,
             zorder=zoffset,
-        )
+        )[0]
+
+        # Hide first marker
+        line.set_markevery(every=list(range(1, len(xs))))
+
+        lines.append((line, xs, ys))
+
+    for line, xs, ys in lines:
+        ax.fill_between(xs, ys, color=line.get_color(), alpha=fill_alpha, zorder=-1.0)
 
     if xlabel is not None:
         ax.set_xlabel(xlabel)
-    ax.set_xlim(xmin=0.0, xmax=1.0)
+    ax.set_xlim(xmin=0.0, xmax=1.025)
 
     if ylabel is not None:
         ax.set_ylabel(ylabel)
-    ax.set_ylim(ymin=0.0, ymax=1.0)
+    ax.set_ylim(ymin=0.0, ymax=1.025)
+
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
     ax.legend(values.keys(), loc=legend_loc)
 
