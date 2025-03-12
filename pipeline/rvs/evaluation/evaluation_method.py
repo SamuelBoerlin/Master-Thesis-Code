@@ -1,5 +1,6 @@
+import pickle
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
 
 import numpy as np
 from nerfstudio.utils.rich_utils import CONSOLE
@@ -52,6 +53,9 @@ def evaluate_results(
     output_dir: Path,
     skip_validation: bool,
 ) -> None:
+    dumps_dir = output_dir / "dumps"
+    dumps_dir.mkdir(parents=True, exist_ok=True)
+
     CONSOLE.rule("Embedding prompts for categories...")
     categories_embeddings = embed_categories(lvis.dataset.keys(), lvis, embedder)
 
@@ -64,9 +68,11 @@ def evaluate_results(
     avg_number_of_views_per_category = calculate_selected_views_avg_per_category(
         lvis, available_uids, instance, skip_validation=skip_validation
     )
+    dump_result(avg_number_of_views_per_category, dumps_dir / "avg_number_of_views_per_category.pkl")
     histogram_of_views_per_category = calculte_selected_views_histogram_per_category(
         lvis, available_uids, instance, skip_validation=skip_validation
     )
+    dump_result(histogram_of_views_per_category, dumps_dir / "histogram_of_views_per_category.pkl")
 
     min_number_of_views: int = None
     max_number_of_views: int = None
@@ -87,6 +93,7 @@ def evaluate_results(
 
     # avg_number_of_views = np.average([value for _, value in avg_number_of_views_per_category.items()])
     avg_histogram_of_views = calculate_views_histogram_avg(histogram_of_views_per_category)
+    dump_result(avg_histogram_of_views, dumps_dir / "avg_histogram_of_views.pkl")
 
     CONSOLE.rule("Embedding selected views...")
     avg_selected_views_embeddings, all_selected_views_embeddings = embed_selected_views(
@@ -96,6 +103,8 @@ def evaluate_results(
         instance,
         skip_validation=skip_validation,
     )
+    dump_result(avg_selected_views_embeddings, dumps_dir / "avg_selected_views_embeddings.pkl")
+    dump_result(all_selected_views_embeddings, dumps_dir / "all_selected_views_embeddings.pkl")
     available_uids = avg_selected_views_embeddings.keys()
 
     CONSOLE.rule("Embedding equivalent distribution of random views...")
@@ -107,6 +116,8 @@ def evaluate_results(
         np.random.default_rng(seed=seed),
         discrete_distribution(np.arange(avg_histogram_of_views.shape[0]), avg_histogram_of_views),
     )
+    dump_result(avg_equiv_random_views_embeddings, dumps_dir / "avg_equiv_random_views_embeddings.pkl")
+    dump_result(all_equiv_random_views_embeddings, dumps_dir / "all_equiv_random_views_embeddings.pkl")
     available_uids = avg_equiv_random_views_embeddings.keys()
 
     CONSOLE.rule("Embedding best views w.r.t. ground truth...")
@@ -117,11 +128,14 @@ def evaluate_results(
         instance,
         categories_embeddings,
     )
+    dump_result(best_views_embeddings, dumps_dir / "best_views_embeddings.pkl")
     available_uids = best_views_embeddings.keys()
 
     CONSOLE.rule("Calculate number of clusters...")
     avg_number_of_clusters_per_category = calculate_clusters_avg_per_category(lvis, available_uids, instance)
+    dump_result(avg_number_of_clusters_per_category, dumps_dir / "avg_number_of_clusters_per_category.pkl")
     histogram_of_clusters_per_category = calculte_clusters_histogram_per_category(lvis, available_uids, instance)
+    dump_result(histogram_of_clusters_per_category, dumps_dir / "histogram_of_clusters_per_category.pkl")
 
     CONSOLE.rule("Calculate similarities...")
     similarities = calculate_similarity_to_ground_truth(
@@ -133,6 +147,7 @@ def evaluate_results(
         },
         categories_embeddings,
     )
+    dump_result(similarities, dumps_dir / "similarities.pkl")
     cross_similarities = calculate_avg_similarity_between_all_models_and_category_ground_truths(
         lvis,
         {
@@ -142,20 +157,23 @@ def evaluate_results(
         },
         categories_embeddings,
     )
+    dump_result(cross_similarities, dumps_dir / "cross_similarities.pkl")
 
     CONSOLE.rule("Calculate precision/recall...")
     precision_recall = calculate_precision_recall(
         {
             f"Average Embedding of Selected Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_selected_views_embeddings,
             f"Best Embedding of Selected Views w.r.t. Query (${min_number_of_views} \leq N \leq {max_number_of_views}$)": all_selected_views_embeddings,
-            f"Average Embedding of Random Views ($N = (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_equiv_random_views_embeddings,
+            f"Average Embedding of Random Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_equiv_random_views_embeddings,
             f"Best Embedding of Random Views w.r.t. Query (${min_number_of_views} \leq N \leq {max_number_of_views}$)": all_equiv_random_views_embeddings,
             "Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
         },
         categories_embeddings,
         lvis.uid_to_category,
     )
+    dump_result(precision_recall, dumps_dir / "precision_recall.pkl")
     precision_recall_auc = calculate_precision_recall_auc(precision_recall)
+    dump_result(precision_recall_auc, dumps_dir / "precision_recall_auc.pkl")
 
     CONSOLE.rule("Create results...")
 
@@ -263,3 +281,13 @@ def embed_categories(
 def category_name_to_embedding_prompt(category: Category, lvis: LVISDataset) -> str:
     category_name = lvis.get_category_name(category).replace("_", " ")
     return f"a photo of a {category_name}."
+
+
+def dump_result(result: Any, file: Path) -> None:
+    with file.open("wb") as f:
+        pickle.dump(result, f)
+
+
+def load_result(file: Path) -> Any:
+    with file.open("rb") as f:
+        return pickle.load(f)
