@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, NewType, Optional, Tuple, Union
 
 import numpy as np
+from matplotlib import patheffects as pe
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -420,3 +421,53 @@ def elbow_plot(
     if ylabel is not None:
         ax.set_ylabel(ylabel)
     ax.set_ylim(ylim)
+
+
+def comparison_grid_plot(
+    fig: Figure,
+    ax: Axes,
+    values: NDArray,
+    xlabels: List[str],
+    ylabels: List[str],
+    colorbarlabel: Optional[str] = None,
+    value_format: str = "{0:.2f}",
+    inches_per_column: Optional[float] = 0.5,
+) -> None:
+    if len(ylabels) != values.shape[0]:
+        raise ValueError("len(ylabels) != values.shape[0]")
+
+    if len(xlabels) != values.shape[1]:
+        raise ValueError("len(xlabels) != values.shape[1]")
+
+    if inches_per_column is not None:
+        fig.set_size_inches([fig.get_size_inches()[0] + inches_per_column * values.shape[1], fig.get_size_inches()[1]])
+
+    image = ax.imshow(values)
+
+    cbar = fig.colorbar(image, ax=ax, fraction=0.0492 * values.shape[0] / values.shape[1], pad=0.04)
+    if colorbarlabel is not None:
+        cbar.ax.set_ylabel(colorbarlabel, rotation=-90, va="bottom")
+
+    ax.set_xticks(range(values.shape[1]), labels=xlabels, rotation=30, ha="right", rotation_mode="anchor")
+    ax.set_yticks(range(values.shape[0]), labels=ylabels)
+
+    ax.spines[:].set_visible(False)
+
+    ax.set_xticks(np.arange(values.shape[1] + 1) - 0.49, minor=True)
+    ax.set_yticks(np.arange(values.shape[0] + 1) - 0.49, minor=True)
+    ax.grid(which="minor", color="white", linestyle="-", linewidth=3)
+    ax.tick_params(which="minor", bottom=False, left=False)
+
+    for i in range(values.shape[0]):
+        for j in range(values.shape[1]):
+            value = values[i, j]
+            value_str = value_format.format(value) if np.isfinite(value) else "n/a"
+            ax.text(
+                j,
+                i,
+                value_str,
+                ha="center",
+                va="center",
+                color="w",
+                path_effects=[pe.withStroke(linewidth=2, foreground="black")],
+            )

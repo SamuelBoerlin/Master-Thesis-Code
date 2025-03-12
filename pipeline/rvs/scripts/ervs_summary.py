@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import matplotlib.patheffects as pe
 import numpy as np
 import tyro
 from matplotlib import pyplot as plt
@@ -14,7 +13,7 @@ from rvs.evaluation.evaluation import EvaluationConfig
 from rvs.evaluation.evaluation_method import load_result
 from rvs.evaluation.lvis import Category
 from rvs.utils.config import load_config, run_in_config_working_dir
-from rvs.utils.plot import save_figure
+from rvs.utils.plot import comparison_grid_plot, save_figure
 
 
 @dataclass
@@ -22,6 +21,8 @@ class Args:
     configs: List[Path] = tyro.MISSING
 
     names: Optional[List[str]] = None
+
+    category: Optional[str] = None
 
     output_dir: Path = tyro.MISSING
 
@@ -64,10 +65,10 @@ def main(args: Args) -> None:
         )
 
     CONSOLE.rule("Calculate average precision/recall")
-    plot_avg_precision_recall_auc(args.output_dir / "precision_recall_auc.png", evals)
+    plot_avg_precision_recall_auc(args.output_dir / "precision_recall_auc.png", evals, args.category)
 
 
-def plot_avg_precision_recall_auc(file: Path, evals: List[Eval]) -> None:
+def plot_avg_precision_recall_auc(file: Path, evals: List[Eval], category: Optional[str]) -> None:
     all_avg_precision_recall_auc: Dict[int, Dict[Method, float]] = dict()
 
     methods: Dict[Method, int] = dict()
@@ -80,7 +81,9 @@ def plot_avg_precision_recall_auc(file: Path, evals: List[Eval]) -> None:
         avg_precision_recall_auc: Dict[Method, float] = dict()
 
         for method, category_pr_auc in precision_recall_auc.items():
-            avg_precision_recall_auc[method] = np.average(list(category_pr_auc.values()))
+            values = list(category_pr_auc.values()) if category is None else [category_pr_auc.get(category, np.nan)]
+
+            avg_precision_recall_auc[method] = np.average(values)
 
             if method not in methods:
                 methods[method] = len(methods)
@@ -95,28 +98,20 @@ def plot_avg_precision_recall_auc(file: Path, evals: List[Eval]) -> None:
         for method, value in results.items():
             values[methods[method]][experiment] = value
 
-    fig, ax = plt.subplots()
+    values[1][1] = np.nan
 
-    ax.imshow(values)
-
-    ax.set_xticks(range(num_experiments), labels=[eval.name for eval in evals])
-    ax.set_yticks(range(num_methods), labels=list(methods.keys()))
-
-    for i in range(num_methods):
-        for j in range(num_experiments):
-            ax.text(
-                j,
-                i,
-                "{0:.2f}".format(values[i, j]),
-                ha="center",
-                va="center",
-                color="w",
-                path_effects=[pe.withStroke(linewidth=2, foreground="black")],
-            )
+    fig, ax = plt.subplots(layout="constrained")
 
     ax.set_title("Average PR AUC")
 
-    fig.tight_layout()
+    comparison_grid_plot(
+        fig,
+        ax,
+        values,
+        xlabels=[eval.name for eval in evals],
+        ylabels=list(methods.keys()),
+        colorbarlabel="Average PR AUC",
+    )
 
     save_figure(fig, file)
 
