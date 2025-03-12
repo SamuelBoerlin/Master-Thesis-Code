@@ -98,8 +98,6 @@ def plot_avg_precision_recall_auc(file: Path, evals: List[Eval], category: Optio
         for method, value in results.items():
             values[methods[method]][experiment] = value
 
-    values[1][1] = np.nan
-
     fig, ax = plt.subplots(layout="constrained")
 
     ax.set_title("Average PR AUC")
