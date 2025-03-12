@@ -21,6 +21,7 @@ rvs = "rvs.scripts.rvs:entrypoint"
 ervs = "rvs.scripts.ervs:entrypoint"
 rvs_dataset = "rvs.scripts.rvs_dataset:entrypoint"
 ervs_embed = "rvs.scripts.ervs_embed:entrypoint"
+ervs_summary = "rvs.scripts.ervs_summary:entrypoint"
 
 #[project.entry-points.'rvs.pipelines']
 #default = 'rvs.rvs_configs:default_pipeline'

@@ -1,4 +1,3 @@
-import os
 import re
 import threading
 from collections import deque
@@ -18,7 +17,7 @@ from rvs.evaluation.evaluation_method import category_name_to_embedding_prompt
 from rvs.evaluation.lvis import create_dataset
 from rvs.pipeline.pipeline import PipelineConfig
 from rvs.utils.cache import get_evaluation_prompt_embedding_cache_key, get_pipeline_render_embedding_cache_key
-from rvs.utils.config import find_config_working_dir, load_config
+from rvs.utils.config import load_config, run_in_config_working_dir
 from rvs.utils.console import file_link
 
 
@@ -128,17 +127,7 @@ class PipelineRendersCommand(Command):
 
     @staticmethod
     def __get_pipeline_base_dir(config_file: Path, config: PipelineConfig) -> Path:
-        working_dir = os.getcwd()
-
-        try:
-            pipeline_working_dir = find_config_working_dir(config_file, config.output_dir)
-
-            if pipeline_working_dir is not None:
-                os.chdir(pipeline_working_dir)
-
-            return config.get_base_dir().resolve()
-        finally:
-            os.chdir(working_dir)
+        return run_in_config_working_dir(config_file, config.output_dir, lambda: config.get_base_dir().resolve())
 
 
 @dataclass
@@ -173,17 +162,7 @@ class EvaluationRendersCommand(Command):
                 )
 
     def __get_evaluation_base_dir(self, config: EvaluationConfig) -> Path:
-        working_dir = os.getcwd()
-
-        try:
-            eval_working_dir = find_config_working_dir(self.config, config.output_dir)
-
-            if eval_working_dir is not None:
-                os.chdir(eval_working_dir)
-
-            return config.output_dir.resolve()
-        finally:
-            os.chdir(working_dir)
+        return run_in_config_working_dir(self.config, config.output_dir, config.output_dir.resolve)
 
 
 @dataclass

@@ -1,4 +1,5 @@
 import dataclasses
+import os
 from pathlib import Path
 from typing import Any, Callable, Optional, Set, Type, TypeVar
 
@@ -61,6 +62,23 @@ def find_config_working_dir(file: Path, saved_dir: Path) -> Optional[Path]:
         )
 
     return common_dir.parent
+
+
+T = TypeVar("T")
+
+
+def run_in_config_working_dir(file: Path, saved_dir: Path, func: Callable[[], T]) -> T:
+    working_dir = os.getcwd()
+
+    try:
+        eval_working_dir = find_config_working_dir(file, saved_dir)
+
+        if eval_working_dir is not None:
+            os.chdir(eval_working_dir)
+
+        return func()
+    finally:
+        os.chdir(working_dir)
 
 
 def apply_missing_config_defaults(
