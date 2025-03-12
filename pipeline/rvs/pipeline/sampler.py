@@ -217,6 +217,9 @@ class BinarySearchDensityTrimeshPositonSamplerConfig(PositionSamplerConfig):
     samples_per_unit_area: float = 500
     """Desired number of samples per unit area (after normalization), i.e. density"""
 
+    min_num_samples: int = 250
+    """Minimum number of samples"""
+
     num_iterations: int = 32
     """Number of binary search iterations"""
 
@@ -242,8 +245,9 @@ class BinarySearchDensityTrimeshPositionSampler(BaseTrimeshPositionSampler):
     ) -> NDArray:
         surface_area = np.sum(self._surface_area(tris))
 
-        target_num_samples = min(
-            int(math.ceil(self.config.samples_per_unit_area * surface_area)), self.config.num_samples
+        target_num_samples = max(
+            min(int(math.ceil(self.config.samples_per_unit_area * surface_area)), self.config.num_samples),
+            self.config.min_num_samples,
         )
 
         if target_num_samples <= 0:
@@ -309,6 +313,9 @@ class FarthestPointSamplingDensityTrimeshPositonSamplerConfig(PositionSamplerCon
     samples_per_unit_area: float = 500
     """Desired number of samples per unit area (after normalization), i.e. density"""
 
+    min_num_samples: int = 250
+    """Minimum number of samples"""
+
 
 # Y. Eldar, M. Lindenbaum, M. Porat and Y. Y. Zeevi (1997), The farthest point strategy for progressive image sampling. https://doi.org/10.1109/83.623193
 # Charles R. Qi and Li Yi and Hao Su and Leonidas J. Guibas (2017), PointNet++: Deep Hierarchical Feature Learning on Point Sets in a Metric Space. https://doi.org/10.48550/arXiv.1706.02413
@@ -327,8 +334,9 @@ class FarthestPointSamplingDensityTrimeshPositionSampler(BaseTrimeshPositionSamp
     ) -> NDArray:
         surface_area = np.sum(self._surface_area(tris))
 
-        target_num_samples = min(
-            int(math.ceil(self.config.samples_per_unit_area * surface_area)), self.config.num_samples
+        target_num_samples = max(
+            min(int(math.ceil(self.config.samples_per_unit_area * surface_area)), self.config.num_samples),
+            self.config.min_num_samples,
         )
 
         if target_num_samples <= 0:
