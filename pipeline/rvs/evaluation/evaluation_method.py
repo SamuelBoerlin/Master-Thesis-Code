@@ -14,6 +14,7 @@ from rvs.evaluation.analysis.clusters import (
     plot_clusters_histogram,
     plot_elbows_samples,
 )
+from rvs.evaluation.analysis.loss import calculate_avg_loss, plot_avg_loss
 from rvs.evaluation.analysis.precision_recall import (
     calculate_precision_recall,
     calculate_precision_recall_auc,
@@ -67,6 +68,18 @@ def evaluate_results(
         for uid in lvis.dataset[category]:
             available_uids.add(uid)
 
+    CONSOLE.rule("Calculate losses...")
+    avg_clip_loss = calculate_avg_loss(lvis, available_uids, instance, "clip_loss")
+    dump_result(avg_clip_loss, dumps_dir / "avg_clip_loss.pkl")
+    avg_dino_loss = calculate_avg_loss(lvis, available_uids, instance, "dino_loss")
+    dump_result(avg_dino_loss, dumps_dir / "avg_dino_loss.pkl")
+    avg_rgb_loss = calculate_avg_loss(lvis, available_uids, instance, "rgb_loss")
+    dump_result(avg_rgb_loss, dumps_dir / "avg_rgb_loss.pkl")
+    avg_image_psnr = calculate_avg_loss(lvis, available_uids, instance, "image_psnr")
+    dump_result(avg_image_psnr, dumps_dir / "avg_image_psnr.pkl")
+    avg_train_loss = calculate_avg_loss(lvis, available_uids, instance, "train_loss")
+    dump_result(avg_train_loss, dumps_dir / "avg_train_loss.pkl")
+
     CONSOLE.rule("Calculate number of selected views...")
     avg_number_of_views_per_category = calculate_selected_views_avg_per_category(
         lvis, available_uids, instance, skip_validation=skip_validation
@@ -96,7 +109,7 @@ def evaluate_results(
 
     number_of_views_str = f"${min_number_of_views} \leq N \leq {max_number_of_views}$"
     if min_number_of_views == max_number_of_views:
-        number_of_views_str = f"$N \eq {max_number_of_views}$"
+        number_of_views_str = f"$N \equal {max_number_of_views}$"
 
     method_titles: Dict[Method, str] = {
         "best_embedding_of_views_wrt_ground_truth": "Best Embedding of Views w.r.t. Ground Truth",
@@ -196,6 +209,12 @@ def evaluate_results(
         category: category + " (" + str(count_category_items(lvis.uid_to_category, available_uids, category)) + ")"
         for category in lvis.categories
     }
+
+    plot_avg_loss(
+        avg_clip_loss, "CLIP Loss", "Huber Loss ($\delta \equal 1.25$)", output_dir / "losses" / "clip_loss.png"
+    )
+    plot_avg_loss(avg_dino_loss, "DINO Loss", "Mean Squared Error", output_dir / "losses" / "dino_loss.png")
+    plot_avg_loss(avg_train_loss, "Train Loss", "Loss", output_dir / "losses" / "train_loss.png")
 
     plot_clusters_avg_per_category(
         avg_number_of_clusters_per_category,

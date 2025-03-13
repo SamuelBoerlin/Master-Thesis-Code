@@ -512,7 +512,7 @@ def comparison_grid_plot(
     image = ax.imshow(values)
 
     if colorbar_orientation == "vertical":
-        aspect = float(values.shape[0]) / values.shape[1]
+        aspect = float(values.shape[0]) / values.shape[1] if values.shape[1] > 0 else 1.0
         cbar = fig.colorbar(
             image,
             ax=ax,
