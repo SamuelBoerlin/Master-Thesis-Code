@@ -5,7 +5,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
-from rvs.evaluation.analysis.utils import Method, count_category_items, rename_categories_tuple
+from rvs.evaluation.analysis.utils import Method, count_category_items, rename_categories_tuple, rename_methods_dict
 from rvs.evaluation.lvis import Category, Uid
 from rvs.utils.map import convert_nested_maps_to_tuples, extract_nested_maps, get_keys_of_nested_maps
 from rvs.utils.plot import Precision, Recall, grouped_bar_plot, place_legend_outside, precision_recall_plot, save_figure
@@ -146,6 +146,7 @@ def plot_precision_recall(
     file: Path,
     category_names: Optional[Dict[Category, str]] = None,
     category_filter: Optional[Set[str]] = None,
+    method_names: Optional[Dict[Method, str]] = None,
 ) -> None:
     categories = get_keys_of_nested_maps(precision_recall)
 
@@ -166,7 +167,7 @@ def plot_precision_recall(
 
         precision_recall_plot(
             ax,
-            values=extract_nested_maps(precision_recall, category),
+            values=rename_methods_dict(extract_nested_maps(precision_recall, category), method_names),
             xlabel="Recall",
             ylabel="Precision",
             legend_loc="upper left",
@@ -184,6 +185,7 @@ def plot_precision_recall_auc(
     file: Path,
     category_names: Optional[Dict[Category, str]] = None,
     category_filter: Optional[Set[str]] = None,
+    method_names: Optional[Dict[Method, str]] = None,
 ) -> None:
     categories = tuple(
         sorted(
@@ -202,7 +204,10 @@ def plot_precision_recall_auc(
     grouped_bar_plot(
         ax,
         groups=rename_categories_tuple(categories, category_names),
-        values=convert_nested_maps_to_tuples(precision_recall_auc, key_order=categories, default=lambda _: 0.0),
+        values=rename_methods_dict(
+            convert_nested_maps_to_tuples(precision_recall_auc, key_order=categories, default=lambda _: 0.0),
+            method_names,
+        ),
         xlabel="Objaverse 1.0 LVIS Category\n(size of category in parentheses)",
         ylabel="PR AUC",
         legend_loc="upper left",

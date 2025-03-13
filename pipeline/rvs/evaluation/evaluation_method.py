@@ -26,7 +26,7 @@ from rvs.evaluation.analysis.similarity import (
     plot_avg_similarities_per_category,
     plot_avg_similariy_between_models_and_categories,
 )
-from rvs.evaluation.analysis.utils import count_category_items
+from rvs.evaluation.analysis.utils import Method, count_category_items
 from rvs.evaluation.analysis.views import (
     calculate_selected_views_avg_per_category,
     calculate_views_histogram_avg,
@@ -91,6 +91,18 @@ def evaluate_results(
         min_number_of_views = 0
         max_number_of_views = 0
 
+    number_of_views_str = f"${min_number_of_views} \leq N \leq {max_number_of_views}$"
+    if min_number_of_views == max_number_of_views:
+        number_of_views_str = f"$N \eq {max_number_of_views}$"
+
+    method_titles: Dict[Method, str] = {
+        "best_embedding_of_views_wrt_ground_truth": "Best Embedding of Views w.r.t. Ground Truth",
+        "avg_embedding_of_selected_views": f"Average Embedding of Selected Views ({number_of_views_str})",
+        "best_embedding_of_selected_views_wrt_query": f"Best Embedding of Selected Views w.r.t. Query ({number_of_views_str})",
+        "avg_embedding_of_random_views": f"Average Embedding of Random Views ({number_of_views_str})",
+        "best_embedding_of_random_views_wrt_query": f"Best Embedding of Random Views w.r.t. Query ({number_of_views_str})",
+    }
+
     # avg_number_of_views = np.average([value for _, value in avg_number_of_views_per_category.items()])
     avg_histogram_of_views = calculate_views_histogram_avg(histogram_of_views_per_category)
     dump_result(avg_histogram_of_views, dumps_dir / "avg_histogram_of_views.pkl")
@@ -141,9 +153,9 @@ def evaluate_results(
     similarities = calculate_similarity_to_ground_truth(
         lvis,
         {
-            f"Average Embedding of Selected Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_selected_views_embeddings,
-            f"Average Embedding of Random Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_equiv_random_views_embeddings,
-            "Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
+            "best_embedding_of_views_wrt_ground_truth": best_views_embeddings,
+            "avg_embedding_of_selected_views": avg_selected_views_embeddings,
+            "avg_embedding_of_random_views": avg_equiv_random_views_embeddings,
         },
         categories_embeddings,
     )
@@ -151,9 +163,9 @@ def evaluate_results(
     cross_similarities = calculate_avg_similarity_between_all_models_and_category_ground_truths(
         lvis,
         {
-            f"Average Embedding of Selected Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_selected_views_embeddings,
-            f"Average Embedding of Random Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_equiv_random_views_embeddings,
-            "Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
+            "best_embedding_of_views_wrt_ground_truth": best_views_embeddings,
+            "avg_embedding_of_selected_views": avg_selected_views_embeddings,
+            "avg_embedding_of_random_views": avg_equiv_random_views_embeddings,
         },
         categories_embeddings,
     )
@@ -162,11 +174,11 @@ def evaluate_results(
     CONSOLE.rule("Calculate precision/recall...")
     precision_recall = calculate_precision_recall(
         {
-            f"Average Embedding of Selected Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_selected_views_embeddings,
-            f"Best Embedding of Selected Views w.r.t. Query (${min_number_of_views} \leq N \leq {max_number_of_views}$)": all_selected_views_embeddings,
-            f"Average Embedding of Random Views (${min_number_of_views} \leq N \leq {max_number_of_views}$)": avg_equiv_random_views_embeddings,
-            f"Best Embedding of Random Views w.r.t. Query (${min_number_of_views} \leq N \leq {max_number_of_views}$)": all_equiv_random_views_embeddings,
-            "Best Embedding of Views w.r.t. Ground Truth": best_views_embeddings,
+            "best_embedding_of_views_wrt_ground_truth": best_views_embeddings,
+            "avg_embedding_of_selected_views": avg_selected_views_embeddings,
+            "best_embedding_of_selected_views_wrt_query": all_selected_views_embeddings,
+            "avg_embedding_of_random_views": avg_equiv_random_views_embeddings,
+            "best_embedding_of_random_views_wrt_query": all_equiv_random_views_embeddings,
         },
         categories_embeddings,
         lvis.uid_to_category,
@@ -224,6 +236,7 @@ def evaluate_results(
         similarities,
         output_dir / "similarities.png",
         category_names=category_names_with_sizes,
+        method_names=method_titles,
     )
 
     for category in cross_similarities.keys():
@@ -232,6 +245,7 @@ def evaluate_results(
             category,
             output_dir / "cross_similarity" / f"{category}.png",
             category_names=category_names_with_sizes,
+            method_names=method_titles,
         )
 
     for category in categories_embeddings.keys():
@@ -240,12 +254,14 @@ def evaluate_results(
             len(available_uids),
             output_dir / "precision_recall" / f"{category}.png",
             category_filter={category},
+            method_names=method_titles,
         )
 
     plot_precision_recall_auc(
         precision_recall_auc,
         output_dir / "precision_recall_auc.png",
         category_names=category_names_with_sizes,
+        method_names=method_titles,
     )
 
     CONSOLE.rule("Create selected views samples...")

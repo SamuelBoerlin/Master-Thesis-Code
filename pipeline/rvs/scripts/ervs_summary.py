@@ -9,6 +9,7 @@ from nerfstudio.utils.rich_utils import CONSOLE
 from tqdm import tqdm
 
 from rvs.evaluation.analysis.similarity import Method
+from rvs.evaluation.analysis.utils import rename_methods_dict
 from rvs.evaluation.evaluation import EvaluationConfig
 from rvs.evaluation.evaluation_method import load_result
 from rvs.evaluation.lvis import Category
@@ -69,6 +70,14 @@ def main(args: Args) -> None:
 
 
 def plot_avg_precision_recall_auc(file: Path, evals: List[Eval], category: Optional[str]) -> None:
+    method_titles: Dict[Method, str] = {
+        "best_embedding_of_views_wrt_ground_truth": "Best Embedding of Views w.r.t. Ground Truth",
+        "avg_embedding_of_selected_views": "Average Embedding of Selected Views",
+        "best_embedding_of_selected_views_wrt_query": "Best Embedding of Selected Views w.r.t. Query",
+        "avg_embedding_of_random_views": "Average Embedding of Random Views",
+        "best_embedding_of_random_views_wrt_query": "Best Embedding of Random Views w.r.t. Query",
+    }
+
     all_avg_precision_recall_auc: Dict[int, Dict[Method, float]] = dict()
 
     methods: Dict[Method, int] = dict()
@@ -107,7 +116,7 @@ def plot_avg_precision_recall_auc(file: Path, evals: List[Eval], category: Optio
         ax,
         values,
         xlabels=[eval.name for eval in evals],
-        ylabels=list(methods.keys()),
+        ylabels=list(rename_methods_dict(methods, method_titles).keys()),
         colorbar_label="Average PR AUC",
     )
 

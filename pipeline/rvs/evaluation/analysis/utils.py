@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, NewType, Optional, Set, Tuple
+from typing import Any, Dict, List, NewType, Optional, Set, Tuple, TypeVar
 
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.utils.map import get_keys_of_nested_maps
@@ -24,6 +24,18 @@ def rename_categories_tuple(
     if category_names is None:
         return categories
     return tuple([category_names[category] if category in category_names else category for category in categories])
+
+
+T = TypeVar("T")
+
+
+def rename_methods_dict(
+    map: Dict[Method, T],
+    method_names: Optional[Dict[Category, str]],
+) -> Dict[str, T]:
+    if method_names is None:
+        return map
+    return {method_names.get(key, key): value for key, value in map.items()}
 
 
 def count_category_items(map: Dict[Uid, Category], uids: List[Uid], category: Category) -> int:

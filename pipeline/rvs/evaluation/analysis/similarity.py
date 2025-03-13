@@ -5,7 +5,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
-from rvs.evaluation.analysis.utils import Method, get_categories_tuple, rename_categories_tuple
+from rvs.evaluation.analysis.utils import Method, get_categories_tuple, rename_categories_tuple, rename_methods_dict
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.utils.map import convert_nested_maps_to_tuples, get_keys_of_nested_maps
 from rvs.utils.plot import grouped_bar_plot, save_figure
@@ -45,6 +45,7 @@ def plot_avg_similarities_per_category(
     similarities: Dict[Method, Dict[Uid, float]],
     file: Path,
     category_names: Optional[Dict[Category, str]] = None,
+    method_names: Optional[Dict[Method, str]] = None,
 ) -> None:
     categories = get_categories_tuple(lvis, similarities)
 
@@ -80,7 +81,9 @@ def plot_avg_similarities_per_category(
     grouped_bar_plot(
         ax,
         groups=rename_categories_tuple(categories, category_names),
-        values=convert_nested_maps_to_tuples(avg_similarities, key_order=categories, default=lambda _: 0.0),
+        values=convert_nested_maps_to_tuples(
+            rename_methods_dict(avg_similarities, method_names), key_order=categories, default=lambda _: 0.0
+        ),
         xlabel="Objaverse 1.0 LVIS Category\n(size of category in parentheses)",
         ylabel="Average Embedding Cosine-Similarity",
     )
@@ -144,6 +147,7 @@ def plot_avg_similariy_between_models_and_categories(
     main_category: str,
     file: Path,
     category_names: Optional[Dict[Category, str]] = None,
+    method_names: Optional[Dict[Method, str]] = None,
 ) -> None:
     main_category_name = rename_categories_tuple((main_category,), category_names)[0]
 
@@ -158,7 +162,9 @@ def plot_avg_similariy_between_models_and_categories(
     grouped_bar_plot(
         ax,
         groups=rename_categories_tuple(categories, category_names),
-        values=convert_nested_maps_to_tuples(similarities, key_order=categories, default=lambda _: 0.0),
+        values=convert_nested_maps_to_tuples(
+            rename_methods_dict(similarities, method_names), key_order=categories, default=lambda _: 0.0
+        ),
         xlabel="Objaverse 1.0 LVIS Category\n(size of category in parentheses)",
         ylabel="Average Embedding Cosine-Similarity",
     )
