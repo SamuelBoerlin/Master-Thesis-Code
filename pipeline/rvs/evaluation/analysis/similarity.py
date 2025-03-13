@@ -5,10 +5,16 @@ import numpy as np
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
-from rvs.evaluation.analysis.utils import Method, get_categories_tuple, rename_categories_tuple, rename_methods_dict
+from rvs.evaluation.analysis.utils import (
+    Method,
+    get_categories_tuple,
+    rename_categories_dict,
+    rename_categories_tuple,
+    rename_methods_dict,
+)
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
 from rvs.utils.map import convert_nested_maps_to_tuples, get_keys_of_nested_maps
-from rvs.utils.plot import grouped_bar_plot, save_figure
+from rvs.utils.plot import comparison_grid_plot, grouped_bar_plot, save_figure
 
 
 def calculate_similarity_to_ground_truth(
@@ -40,13 +46,10 @@ def calculate_similarity_to_ground_truth(
     return similarities
 
 
-def plot_avg_similarities_per_category(
+def calculate_avg_similarity_to_ground_truth(
     lvis: LVISDataset,
     similarities: Dict[Method, Dict[Uid, float]],
-    file: Path,
-    category_names: Optional[Dict[Category, str]] = None,
-    method_names: Optional[Dict[Method, str]] = None,
-) -> None:
+) -> Dict[Method, Dict[Category, float]]:
     categories = get_categories_tuple(lvis, similarities)
 
     avg_similarities: Dict[Method, Dict[Category, float]] = dict()
@@ -72,6 +75,20 @@ def plot_avg_similarities_per_category(
 
         avg_similarities[method] = method_avg_similarities
 
+    return avg_similarities
+
+
+def plot_avg_similarities_per_category(
+    lvis: LVISDataset,
+    similarities: Dict[Method, Dict[Uid, float]],
+    file: Path,
+    category_names: Optional[Dict[Category, str]] = None,
+    method_names: Optional[Dict[Method, str]] = None,
+) -> None:
+    categories = get_categories_tuple(lvis, similarities)
+
+    avg_similarities = calculate_avg_similarity_to_ground_truth(lvis, similarities)
+
     fig, ax = plt.subplots()
 
     ax.set_title(
@@ -85,12 +102,58 @@ def plot_avg_similarities_per_category(
             rename_methods_dict(avg_similarities, method_names), key_order=categories, default=lambda _: 0.0
         ),
         xlabel="Objaverse 1.0 LVIS Category\n(size of category in parentheses)",
-        ylabel="Average Embedding Cosine-Similarity",
+        ylabel="Cosine-Similarity",
     )
 
     ax.set_ylim(ymin=0.0, ymax=1.0)
 
     fig.tight_layout()
+
+    save_figure(fig, file)
+
+
+def plot_avg_similarities_per_category_grid(
+    lvis: LVISDataset,
+    similarities: Dict[Method, Dict[Uid, float]],
+    file: Path,
+    category_names: Optional[Dict[Category, str]] = None,
+    method_names: Optional[Dict[Method, str]] = None,
+) -> None:
+    avg_similarities = calculate_avg_similarity_to_ground_truth(lvis, similarities)
+
+    methods: Dict[Method, int] = dict()
+    categories: Dict[Category, int] = dict()
+
+    for method, category_similarities in avg_similarities.items():
+        for category, value in category_similarities.items():
+            if method not in methods:
+                methods[method] = len(methods)
+
+            if category not in categories:
+                categories[category] = len(categories)
+
+    num_methods = len(methods)
+    num_categories = len(categories)
+
+    values = np.ones((num_methods, num_categories)) * np.nan
+    for method, category_similarities in avg_similarities.items():
+        for category, value in category_similarities.items():
+            values[methods[method]][categories[category]] = value
+
+    fig, ax = plt.subplots(layout="constrained")
+
+    ax.set_title(
+        "Similarity Between CLIP Embeddings of Images and Their\n Corresponding Ground Truth Category Text Prompts"
+    )
+
+    comparison_grid_plot(
+        fig,
+        ax,
+        values,
+        xlabels=list(rename_categories_dict(categories, category_names).keys()),
+        ylabels=list(rename_methods_dict(methods, method_names).keys()),
+        colorbar_label="Cosine-Similarity",
+    )
 
     save_figure(fig, file)
 
@@ -166,11 +229,57 @@ def plot_avg_similariy_between_models_and_categories(
             rename_methods_dict(similarities, method_names), key_order=categories, default=lambda _: 0.0
         ),
         xlabel="Objaverse 1.0 LVIS Category\n(size of category in parentheses)",
-        ylabel="Average Embedding Cosine-Similarity",
+        ylabel="Cosine-Similarity",
     )
 
     ax.set_ylim(ymin=0.0, ymax=1.0)
 
     fig.tight_layout()
+
+    save_figure(fig, file)
+
+
+def plot_avg_similariy_between_models_and_categories_grid(
+    similarities: Dict[Method, Dict[Category, float]],
+    main_category: str,
+    file: Path,
+    category_names: Optional[Dict[Category, str]] = None,
+    method_names: Optional[Dict[Method, str]] = None,
+) -> None:
+    main_category_name = rename_categories_tuple((main_category,), category_names)[0]
+
+    methods: Dict[Method, int] = dict()
+    categories: Dict[Category, int] = dict()
+
+    for method, category_similarities in similarities.items():
+        for category, value in category_similarities.items():
+            if method not in methods:
+                methods[method] = len(methods)
+
+            if category not in categories:
+                categories[category] = len(categories)
+
+    num_methods = len(methods)
+    num_categories = len(categories)
+
+    values = np.ones((num_methods, num_categories)) * np.nan
+    for method, category_similarities in similarities.items():
+        for category, value in category_similarities.items():
+            values[methods[method]][categories[category]] = value
+
+    fig, ax = plt.subplots(layout="constrained")
+
+    ax.set_title(
+        f'Similarity Between CLIP Embeddings of Images in Category\n"{main_category_name}"\nand Embeddings of Category Text Prompts'
+    )
+
+    comparison_grid_plot(
+        fig,
+        ax,
+        values,
+        xlabels=list(rename_categories_dict(categories, category_names).keys()),
+        ylabels=list(rename_methods_dict(methods, method_names).keys()),
+        colorbar_label="Cosine-Similarity",
+    )
 
     save_figure(fig, file)

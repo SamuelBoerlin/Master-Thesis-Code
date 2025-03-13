@@ -65,11 +65,6 @@ def main(args: Args) -> None:
             )
         )
 
-    CONSOLE.rule("Calculate average precision/recall")
-    plot_avg_precision_recall_auc(args.output_dir / "precision_recall_auc.png", evals, args.category)
-
-
-def plot_avg_precision_recall_auc(file: Path, evals: List[Eval], category: Optional[str]) -> None:
     method_titles: Dict[Method, str] = {
         "best_embedding_of_views_wrt_ground_truth": "Best Embedding of Views w.r.t. Ground Truth",
         "avg_embedding_of_selected_views": "Average Embedding of Selected Views",
@@ -78,6 +73,18 @@ def plot_avg_precision_recall_auc(file: Path, evals: List[Eval], category: Optio
         "best_embedding_of_random_views_wrt_query": "Best Embedding of Random Views w.r.t. Query",
     }
 
+    CONSOLE.rule("Calculate average precision/recall")
+    plot_avg_precision_recall_auc(
+        args.output_dir / "precision_recall_auc.png", evals, args.category, method_titles=method_titles
+    )
+
+
+def plot_avg_precision_recall_auc(
+    file: Path,
+    evals: List[Eval],
+    category: Optional[str],
+    method_titles: Optional[Dict[Method, str]] = None,
+) -> None:
     all_avg_precision_recall_auc: Dict[int, Dict[Method, float]] = dict()
 
     methods: Dict[Method, int] = dict()

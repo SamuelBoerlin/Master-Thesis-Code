@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Set, Tuple, TypeVar
+from typing import Callable, Dict, List, Optional, Set, Tuple, TypeVar
 
 K1 = TypeVar("K1")
 K2 = TypeVar("K2")
@@ -57,3 +57,12 @@ def extract_nested_maps(map: Dict[K1, Dict[K2, V]], key: K2) -> Dict[K1, V]:
     for k, inner in map.items():
         ret[k] = inner[key]
     return ret
+
+
+def rename_dict_keys(
+    map: Dict[K1, V],
+    names: Optional[Dict[K1, str]],
+) -> Dict[str, V]:
+    if names is None:
+        return map
+    return {names.get(key, key): value for key, value in map.items()}

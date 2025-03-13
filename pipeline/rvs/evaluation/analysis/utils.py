@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, NewType, Optional, Set, Tuple, TypeVar
 
 from rvs.evaluation.lvis import Category, LVISDataset, Uid
-from rvs.utils.map import get_keys_of_nested_maps
+from rvs.utils.map import get_keys_of_nested_maps, rename_dict_keys
 
 Method = NewType("Method", str)
 
@@ -33,9 +33,14 @@ def rename_methods_dict(
     map: Dict[Method, T],
     method_names: Optional[Dict[Category, str]],
 ) -> Dict[str, T]:
-    if method_names is None:
-        return map
-    return {method_names.get(key, key): value for key, value in map.items()}
+    return rename_dict_keys(map, method_names)
+
+
+def rename_categories_dict(
+    map: Dict[Category, T],
+    category_names: Optional[Dict[Category, str]],
+) -> Dict[str, T]:
+    return rename_dict_keys(map, category_names)
 
 
 def count_category_items(map: Dict[Uid, Category], uids: List[Uid], category: Category) -> int:

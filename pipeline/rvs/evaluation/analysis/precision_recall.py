@@ -5,10 +5,24 @@ import numpy as np
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
-from rvs.evaluation.analysis.utils import Method, count_category_items, rename_categories_tuple, rename_methods_dict
+from rvs.evaluation.analysis.utils import (
+    Method,
+    count_category_items,
+    rename_categories_dict,
+    rename_categories_tuple,
+    rename_methods_dict,
+)
 from rvs.evaluation.lvis import Category, Uid
 from rvs.utils.map import convert_nested_maps_to_tuples, extract_nested_maps, get_keys_of_nested_maps
-from rvs.utils.plot import Precision, Recall, grouped_bar_plot, place_legend_outside, precision_recall_plot, save_figure
+from rvs.utils.plot import (
+    Precision,
+    Recall,
+    comparison_grid_plot,
+    grouped_bar_plot,
+    place_legend_outside,
+    precision_recall_plot,
+    save_figure,
+)
 
 
 def calculate_best_similarity_to_category(
@@ -218,5 +232,53 @@ def plot_precision_recall_auc(
     ax.set_ylim(ymin=0.0, ymax=1.0)
 
     fig.tight_layout()
+
+    save_figure(fig, file)
+
+
+def plot_precision_recall_auc_grid(
+    precision_recall_auc: Dict[Method, Dict[Category, float]],
+    file: Path,
+    category_names: Optional[Dict[Category, str]] = None,
+    category_filter: Optional[Set[str]] = None,
+    method_names: Optional[Dict[Method, str]] = None,
+) -> None:
+    methods: Dict[Method, int] = dict()
+    categories: Dict[Category, int] = dict()
+
+    for method, category_pr_auc in precision_recall_auc.items():
+        for category, value in category_pr_auc.items():
+            if category_filter is not None and category not in category_filter:
+                continue
+
+            if method not in methods:
+                methods[method] = len(methods)
+
+            if category not in categories:
+                categories[category] = len(categories)
+
+    num_methods = len(methods)
+    num_categories = len(categories)
+
+    values = np.ones((num_methods, num_categories)) * np.nan
+    for method, category_pr_auc in precision_recall_auc.items():
+        for category, value in category_pr_auc.items():
+            if category_filter is not None and category not in category_filter:
+                continue
+
+            values[methods[method]][categories[category]] = value
+
+    fig, ax = plt.subplots(layout="constrained")
+
+    ax.set_title("Area Under the Precision Recall Curve")
+
+    comparison_grid_plot(
+        fig,
+        ax,
+        values,
+        xlabels=list(rename_categories_dict(categories, category_names).keys()),
+        ylabels=list(rename_methods_dict(methods, method_names).keys()),
+        colorbar_label="PR AUC",
+    )
 
     save_figure(fig, file)

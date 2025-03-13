@@ -19,12 +19,15 @@ from rvs.evaluation.analysis.precision_recall import (
     calculate_precision_recall_auc,
     plot_precision_recall,
     plot_precision_recall_auc,
+    plot_precision_recall_auc_grid,
 )
 from rvs.evaluation.analysis.similarity import (
     calculate_avg_similarity_between_all_models_and_category_ground_truths,
     calculate_similarity_to_ground_truth,
     plot_avg_similarities_per_category,
+    plot_avg_similarities_per_category_grid,
     plot_avg_similariy_between_models_and_categories,
+    plot_avg_similariy_between_models_and_categories_grid,
 )
 from rvs.evaluation.analysis.utils import Method, count_category_items
 from rvs.evaluation.analysis.views import (
@@ -238,12 +241,26 @@ def evaluate_results(
         category_names=category_names_with_sizes,
         method_names=method_titles,
     )
+    plot_avg_similarities_per_category_grid(
+        lvis,
+        similarities,
+        output_dir / "similarities_grid.png",
+        category_names=category_names_with_sizes,
+        method_names=method_titles,
+    )
 
     for category in cross_similarities.keys():
         plot_avg_similariy_between_models_and_categories(
             cross_similarities[category],
             category,
             output_dir / "cross_similarity" / f"{category}.png",
+            category_names=category_names_with_sizes,
+            method_names=method_titles,
+        )
+        plot_avg_similariy_between_models_and_categories_grid(
+            cross_similarities[category],
+            category,
+            output_dir / "cross_similarity" / f"{category}_grid.png",
             category_names=category_names_with_sizes,
             method_names=method_titles,
         )
@@ -260,6 +277,12 @@ def evaluate_results(
     plot_precision_recall_auc(
         precision_recall_auc,
         output_dir / "precision_recall_auc.png",
+        category_names=category_names_with_sizes,
+        method_names=method_titles,
+    )
+    plot_precision_recall_auc_grid(
+        precision_recall_auc,
+        output_dir / "precision_recall_auc_grid.png",
         category_names=category_names_with_sizes,
         method_names=method_titles,
     )
