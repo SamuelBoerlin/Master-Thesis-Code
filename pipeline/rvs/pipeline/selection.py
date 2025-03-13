@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable, List, Type
+from typing import Callable, List, Optional, Type
 
 import numpy as np
 import torch
@@ -7,6 +7,7 @@ from lerf.lerf import LERFModel
 from lerf.lerf_pipeline import LERFPipeline
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.data.datamanagers.base_datamanager import DataManager
+from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.typing import NDArray
 from torch import Tensor
 
@@ -117,7 +118,19 @@ class MostSimilarToCentroidTrainingViewSelection(ViewSelection, RequirePipelineS
                     best_sim[j] = sim
                     best_idx[j] = image_idx
 
-        return [pipeline_state.training_views[best_idx[j]] for j in range(num_clusters)]
+        selected_views: List[View] = []
+        for j in range(num_clusters):
+            best_view: Optional[View] = None
+            for v in pipeline_state.training_views:
+                if v.index == best_idx[j]:
+                    best_view = v
+                    break
+            if best_view is not None:
+                selected_views.append(best_view)
+            else:
+                CONSOLE.log(f"[bold yellow]WARNING: No view with index {best_idx[j]} found")
+
+        return selected_views
 
 
 class BestTrainingViewSelection(MostSimilarToCentroidTrainingViewSelection):
