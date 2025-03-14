@@ -29,6 +29,15 @@ class ClipAtScaleEmbeddingConfig(ClipEmbeddingConfig):
 
 
 @dataclass
+class ClipAtRandomScaleEmbeddingConfig(ClipEmbeddingConfig):
+    min_scale: float = 0.0
+    """Min. LERF scale parameter"""
+
+    max_scale: float = 1.0
+    """Max. LERF scale parameter"""
+
+
+@dataclass
 class DinoEmbeddingConfig(EmbeddingConfig):
     @property
     def type(self) -> str:

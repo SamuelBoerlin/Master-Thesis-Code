@@ -2,6 +2,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional, Type
 
+import numpy as np
 import torch
 from lerf.lerf import LERFModel
 from nerfstudio.configs.base_config import InstantiateConfig
@@ -11,6 +12,7 @@ from numpy.typing import NDArray
 from torch import Tensor
 
 from rvs.pipeline.embedding import (
+    ClipAtRandomScaleEmbeddingConfig,
     ClipAtScaleEmbeddingConfig,
     ClipEmbeddingConfig,
     DefaultEmbeddingTypes,
@@ -146,16 +148,8 @@ class Field:
         self.trainer.train()
         self.trainer.shutdown()
 
-    def sample(self, config: EmbeddingConfig, positions: NDArray) -> NDArray:
+    def sample(self, config: EmbeddingConfig, positions: NDArray, pipeline_state: PipelineState) -> NDArray:
         if config.type == DefaultEmbeddingTypes.CLIP:
-            clip_scale = 1.0
-
-            if isinstance(config, ClipAtScaleEmbeddingConfig):
-                config_with_scale: ClipAtScaleEmbeddingConfig = config
-                clip_scale = config_with_scale.scale
-            elif not isinstance(config, ClipEmbeddingConfig):
-                raise ValueError(f"Unknown CLIP config type {str(config)}")
-
             # TODO: Proper typing
             lerf_model: LERFModel = self.trainer.pipeline.model
 
@@ -165,8 +159,27 @@ class Field:
             # Sample hashgrid values
             x = self.__sample_hashgrid_values(lerf_model, positions)
 
+            clip_scales = None
+            if isinstance(config, ClipEmbeddingConfig):
+                clip_scales = torch.ones((1, positions.shape[1], 1), device=positions.device)
+            if isinstance(config, ClipAtScaleEmbeddingConfig):
+                config_with_scale: ClipAtScaleEmbeddingConfig = config
+                clip_scales = config_with_scale.scale * torch.ones((1, positions.shape[1], 1), device=positions.device)
+            elif isinstance(config, ClipAtRandomScaleEmbeddingConfig):
+                config_with_random_scale: ClipAtRandomScaleEmbeddingConfig = config
+                random_values = (
+                    np.random.default_rng(pipeline_state.pipeline.config.machine.seed).random(
+                        (1, positions.shape[1], 1)
+                    )
+                    * (config_with_random_scale.max_scale - config_with_random_scale.min_scale)
+                    + config_with_random_scale.min_scale
+                )
+                clip_scales = torch.from_numpy(random_values).to(positions.device)
+            elif not isinstance(config, ClipEmbeddingConfig):
+                raise ValueError(f"Unknown CLIP config type {str(config)}")
+            assert clip_scales is not None
+
             # Obtain embeddings for the given hashgrid values
-            clip_scales = clip_scale * torch.ones((1, positions.shape[1], 1), device=positions.device)
             embeddings = lerf_model.lerf_field.clip_net(torch.cat([x, clip_scales.view(-1, 1)], dim=-1))
 
             # Normalize embeddings

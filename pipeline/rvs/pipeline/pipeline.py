@@ -401,7 +401,7 @@ class Pipeline:
             pipeline_state.sample_embeddings_dict = dict()
 
             for i, embedding_config in enumerate(self.config.embeddings):
-                embeddings = self.field.sample(embedding_config, pipeline_state.sample_positions).copy()
+                embeddings = self.field.sample(embedding_config, pipeline_state.sample_positions, pipeline_state).copy()
                 embeddings.setflags(write=False)
 
                 if i == 0:

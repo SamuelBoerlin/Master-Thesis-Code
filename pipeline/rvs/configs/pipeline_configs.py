@@ -24,7 +24,7 @@ from rvs.pipeline.clustering import (
     LargestKMeansClusteringConfig,
     XMeansClusteringConfig,
 )
-from rvs.pipeline.embedding import ClipAtScaleEmbeddingConfig, DinoEmbeddingConfig
+from rvs.pipeline.embedding import ClipAtRandomScaleEmbeddingConfig, ClipAtScaleEmbeddingConfig, DinoEmbeddingConfig
 from rvs.pipeline.pipeline import FieldConfig, PipelineConfig
 from rvs.pipeline.renderer import BlenderRendererConfig, PyrenderRendererConfig, TrimeshRendererConfig
 from rvs.pipeline.sampler import (
@@ -92,6 +92,11 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
         "clip_and_dino": (
             "Both CLIP (default) and DINO embeddings",
             (ClipAtScaleEmbeddingConfig(), DinoEmbeddingConfig()),
+        ),
+        "rand_clip": ("CLIP embeddings only at random scale", (ClipAtRandomScaleEmbeddingConfig(),)),
+        "rand_clip_and_dino": (
+            "Both CLIP at random scale (default) and DINO embeddings",
+            (ClipAtRandomScaleEmbeddingConfig(), DinoEmbeddingConfig()),
         ),
     },
     PipelineStage.TRAIN_FIELD: {
