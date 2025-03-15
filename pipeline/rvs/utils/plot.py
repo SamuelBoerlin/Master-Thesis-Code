@@ -256,15 +256,29 @@ def image_grid_plot(
     images: List[im.Image],
     columns: Optional[int] = None,
     enlarge_figure_for_more_columns_than: Optional[int] = 1,
-    labels: Optional[List[str]] = None,
+    labels: Optional[List[Optional[str]]] = None,
     label_face_color: Any = "auto",
     label_face_alpha: float = 1.0,
     label_font_weight: Any = "bold",
-    row_labels: Optional[List[str]] = None,
-    col_labels: Optional[List[str]] = None,
-    border_color: Any = "auto",
-    border_alpha: float = 0.5,
+    row_labels: Optional[List[Optional[str]]] = None,
+    row_label_offsets: Optional[List[int]] = None,
+    col_labels: Optional[List[Optional[str]]] = None,
+    col_label_offsets: Optional[List[int]] = None,
+    border_color: Union[Any, List[Any]] = "auto",
+    border_alpha: Union[float, List[float]] = 0.5,
 ) -> List[List[Axes]]:
+    if not isinstance(border_alpha, List):
+        border_alpha = [border_alpha] * len(images)
+
+    if not isinstance(border_color, List):
+        border_color = [border_color] * len(images)
+
+    if len(border_color) != len(images):
+        raise ValueError("len(border_color) != len(images)")
+
+    if len(border_alpha) != len(images):
+        raise ValueError("len(border_alpha) != len(images)")
+
     if labels is not None and len(labels) != len(images):
         raise ValueError(f"Length of len(labels) ({len(labels)}) != len(images) ({len(images)})")
 
@@ -279,6 +293,24 @@ def image_grid_plot(
     rows = int(np.ceil(len(images) * 1.0 / columns))
 
     assert rows > 0 and rows <= columns
+
+    if row_labels is not None and len(row_labels) != rows:
+        raise ValueError("len(row_labels) != rows")
+
+    if row_label_offsets is None:
+        row_label_offsets = [0] * rows
+
+    if len(row_label_offsets) != rows:
+        raise ValueError("len(row_label_offsets) != rows")
+
+    if col_labels is not None and len(col_labels) != columns:
+        raise ValueError("len(col_labels) != columns")
+
+    if col_label_offsets is None:
+        col_label_offsets = [0] * columns
+
+    if len(col_label_offsets) != columns:
+        raise ValueError("len(col_label_offsets) != columns")
 
     if (
         enlarge_figure_for_more_columns_than is not None
@@ -318,7 +350,7 @@ def image_grid_plot(
             if i < len(images):
                 ax.imshow(images[i])
 
-                if labels is not None:
+                if labels is not None and labels[i] is not None:
                     ax.annotate(
                         labels[i],
                         (0.5, -0.015),
@@ -335,7 +367,7 @@ def image_grid_plot(
                         },
                     )
 
-                if col_labels is not None and r == 0:
+                if col_labels is not None and r == col_label_offsets[c] and col_labels[c] is not None:
                     ax.annotate(
                         col_labels[c],
                         (0.5, 1.015),
@@ -352,7 +384,7 @@ def image_grid_plot(
                         },
                     )
 
-                if row_labels is not None and c == 0:
+                if row_labels is not None and c == row_label_offsets[r] and row_labels[r] is not None:
                     ax.annotate(
                         row_labels[r],
                         (-0.015, 0.5),
@@ -377,9 +409,9 @@ def image_grid_plot(
                             1.0,
                             transform=ax.transAxes,
                             linewidth=4,
-                            edgecolor=fig.get_edgecolor() if border_color == "auto" else border_color,
+                            edgecolor=fig.get_edgecolor() if border_color[i] == "auto" else border_color[i],
                             facecolor="none",
-                            alpha=border_alpha,
+                            alpha=border_alpha[i],
                             zorder=2,
                         )
                     )

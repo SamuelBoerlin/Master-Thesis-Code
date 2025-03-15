@@ -13,6 +13,34 @@ from rvs.pipeline.state import Normalization, PipelineState
 from rvs.utils.plot import cluster_colors
 
 
+def render_sample(
+    file: Path,
+    view: View,
+    normalization: Normalization,
+    callback: Callable[[View, im.Image], None],
+    render_as_plot: bool = True,
+    flat_model_color: Optional[NDArray] = None,
+) -> None:
+    output = RenderOutput(
+        path=None,
+        callback=lambda view, image: render_image_plot(view, image, callback)
+        if render_as_plot
+        else callback(view, image),
+    )
+
+    state = PipelineState(None)
+    state.model_normalization = normalization
+
+    renderer = TrimeshRenderer(TrimeshRendererConfig())
+    renderer.render(
+        file,
+        [view],
+        output,
+        state,
+        flat_model_color=flat_model_color,
+    )
+
+
 def render_sample_positions(
     file: Path,
     view: View,
@@ -20,6 +48,7 @@ def render_sample_positions(
     sample_positions: NDArray,
     callback: Callable[[View, im.Image], None],
     render_as_plot: bool = True,
+    flat_model_color: Optional[NDArray] = None,
 ) -> None:
     output = RenderOutput(
         path=None,
@@ -38,6 +67,7 @@ def render_sample_positions(
         output,
         state,
         sample_positions=sample_positions,
+        flat_model_color=flat_model_color,
     )
 
 
@@ -49,6 +79,7 @@ def render_sample_positions_and_colors(
     sample_colors: NDArray,
     callback: Callable[[View, im.Image], None],
     render_as_plot: bool = True,
+    flat_model_color: Optional[NDArray] = None,
 ) -> None:
     output = RenderOutput(
         path=None,
@@ -68,6 +99,7 @@ def render_sample_positions_and_colors(
         state,
         sample_positions=sample_positions,
         sample_colors=sample_colors,
+        flat_model_color=flat_model_color,
     )
 
 
@@ -83,6 +115,7 @@ def render_sample_clusters(
     callback: Callable[[View, im.Image], None],
     hard_assignments: bool = False,
     render_as_plot: bool = True,
+    flat_model_color: Optional[NDArray] = None,
 ) -> None:
     num_samples = sample_embeddings.shape[0]
 
@@ -121,6 +154,7 @@ def render_sample_clusters(
         state,
         sample_positions=sample_positions,
         sample_colors=sample_colors,
+        flat_model_color=flat_model_color,
     )
 
 
@@ -134,6 +168,7 @@ def render_sample_kmeans_clusters_with_cosine_similarity(
     callback: Callable[[View, im.Image], None],
     hard_assignments: bool = False,
     render_as_plot: bool = True,
+    flat_model_color: Optional[NDArray] = None,
 ) -> None:
     num_clusters = cluster_centroids.shape[0]
     num_samples = sample_embeddings.shape[0]
@@ -182,6 +217,7 @@ def render_sample_kmeans_clusters_with_cosine_similarity(
         state,
         sample_positions=sample_positions,
         sample_colors=sample_colors,
+        flat_model_color=flat_model_color,
     )
 
 

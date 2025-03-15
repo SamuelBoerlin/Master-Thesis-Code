@@ -116,13 +116,23 @@ class TrimeshRenderer(Renderer):
         pipeline_state: PipelineState,
         sample_positions: Optional[NDArray] = None,
         sample_colors: Optional[NDArray] = None,
+        flat_model_color: Optional[NDArray] = None,
     ) -> Normalization:
-        obj = trimesh.load(file)
+        obj = trimesh.load(file, skip_materials=flat_model_color is not None)
 
         if not isinstance(obj, Scene):
             raise Exception(f"File {str(file)} is not a scene")
 
         scene: Scene = obj
+
+        if flat_model_color is not None:
+            from trimesh import Trimesh, util
+            from trimesh.visual.material import SimpleMaterial
+
+            for geometry in list(scene.geometry.values()):
+                if util.is_instance_named(geometry, "Trimesh"):
+                    tm: Trimesh = geometry
+                    tm.visual.material = SimpleMaterial(diffuse=flat_model_color)
 
         normalization = pipeline_state.model_normalization
 
