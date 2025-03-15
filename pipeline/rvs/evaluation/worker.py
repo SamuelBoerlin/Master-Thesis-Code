@@ -1,10 +1,11 @@
 import sys
 import traceback
 from pathlib import Path
-from typing import Optional, Set
+from typing import Callable, Optional, Set
 
 from rvs.evaluation.pipeline import PipelineEvaluationInstance
 from rvs.pipeline.stage import PipelineStage
+from rvs.pipeline.state import PipelineState
 from rvs.utils.process import ProcessResult
 
 
@@ -15,6 +16,7 @@ def pipeline_worker_func(
     result: Optional[ProcessResult] = None,
     stdout_file: Optional[str] = None,
     stderr_file: Optional[str] = None,
+    debug_hook: Optional[Callable[[PipelineStage, PipelineState], None]] = None,
 ) -> None:
     try:
         if stdout_file is not None:
@@ -29,7 +31,11 @@ def pipeline_worker_func(
                 raise ValueError("stderr_file path must be absolute")
             sys.stderr = stderr_file_path.open(mode="a", buffering=1, encoding="utf-8")
 
-        instance.run(file, stages_filter=stages_filter)
+        instance.run(
+            file,
+            stages_filter=stages_filter,
+            debug_hook=debug_hook,
+        )
 
         if result is not None:
             result.success = True

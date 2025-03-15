@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, NewType, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, NamedTuple, NewType, Optional, Tuple, TypeVar, Union
 
 import numpy as np
 from matplotlib import patheffects as pe
@@ -260,6 +260,8 @@ def image_grid_plot(
     label_face_color: Any = "auto",
     label_face_alpha: float = 1.0,
     label_font_weight: Any = "bold",
+    row_labels: Optional[List[str]] = None,
+    col_labels: Optional[List[str]] = None,
     border_color: Any = "auto",
     border_alpha: float = 0.5,
 ) -> List[List[Axes]]:
@@ -322,6 +324,40 @@ def image_grid_plot(
                         (0.5, -0.015),
                         horizontalalignment="center",
                         verticalalignment="top",
+                        xycoords="axes fraction",
+                        fontweight=label_font_weight,
+                        bbox={
+                            "facecolor": fig.get_facecolor() if label_face_color == "auto" else label_face_color,
+                            "alpha": label_face_alpha,
+                            "boxstyle": "square",
+                            "edgecolor": "none",
+                            "linewidth": 0,
+                        },
+                    )
+
+                if col_labels is not None and r == 0:
+                    ax.annotate(
+                        col_labels[c],
+                        (0.5, 1.015),
+                        horizontalalignment="center",
+                        verticalalignment="bottom",
+                        xycoords="axes fraction",
+                        fontweight=label_font_weight,
+                        bbox={
+                            "facecolor": fig.get_facecolor() if label_face_color == "auto" else label_face_color,
+                            "alpha": label_face_alpha,
+                            "boxstyle": "square",
+                            "edgecolor": "none",
+                            "linewidth": 0,
+                        },
+                    )
+
+                if row_labels is not None and c == 0:
+                    ax.annotate(
+                        row_labels[r],
+                        (-0.015, 0.5),
+                        horizontalalignment="right",
+                        verticalalignment="center",
                         xycoords="axes fraction",
                         fontweight=label_font_weight,
                         bbox={
@@ -549,3 +585,47 @@ def comparison_grid_plot(
                 color="w",
                 path_effects=[pe.withStroke(linewidth=2, foreground="black")],
             )
+
+
+T = TypeVar("T")
+
+
+def fit_suptitle(fig: Figure, body: Callable[[], T], suptitle: str, suptitle_font_size: int = 24) -> T:
+    suptitle = fig.suptitle(
+        suptitle,
+        bbox={
+            "facecolor": fig.get_facecolor(),
+            "alpha": 0.5,
+            "boxstyle": "square",
+            "edgecolor": "none",
+            "linewidth": 0,
+        },
+        fontsize=suptitle_font_size,
+        verticalalignment="top",
+        y=1.0,
+    )
+
+    fig_size = fig.get_size_inches()
+    fig_size[1] = fig_size[0]
+
+    fig.set_size_inches(fig_size[0], fig_size[1])
+
+    result = body()
+
+    for ax in fig.axes:
+        ax.set_anchor("S")
+
+    fig_size = fig.get_size_inches()
+
+    figure_bb, _, _ = measure_figure(fig)
+    suptitle_bb, _, _ = measure_artist(suptitle)
+
+    top_padding_inches = (1.0 - suptitle_bb.ymin / figure_bb.height) * fig_size[1]
+
+    fig_size[1] += top_padding_inches
+
+    fig.set_size_inches(fig_size[0], fig_size[1])
+
+    fig.subplots_adjust(left=0.0, right=1.0, top=(1.0 - top_padding_inches / fig_size[1]), bottom=0.0)
+
+    return result

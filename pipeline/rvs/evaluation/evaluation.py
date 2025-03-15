@@ -16,6 +16,7 @@ from nerfstudio.configs.base_config import InstantiateConfig, PrintableConfig
 from nerfstudio.utils.rich_utils import CONSOLE
 from torch.multiprocessing import Process
 
+from rvs.evaluation.debug import DebugContext
 from rvs.evaluation.embedder import CachedEmbedder, Embedder, EmbedderConfig, NoopEmbedder
 from rvs.evaluation.evaluation_method import evaluate_results
 from rvs.evaluation.index import load_index
@@ -161,6 +162,7 @@ class PipelineRun:
     parent: EvaluationRun
     file: Path
     stages_filter: Optional[Set[PipelineStage]]
+    debug_ctx: DebugContext
 
 
 class Evaluation:
@@ -186,7 +188,16 @@ class Evaluation:
 
     input_pipelines: Optional[List[PipelineEvaluationInstance]]
 
-    def __init__(self, config: EvaluationConfig, overrides: Callable[[EvaluationConfig], EvaluationConfig] = None):
+    _debug_hook: Optional[Callable[[DebugContext], None]]
+
+    def __init__(
+        self,
+        config: EvaluationConfig,
+        overrides: Callable[[EvaluationConfig], EvaluationConfig] = None,
+        debug_hook: Optional[Callable[[DebugContext], None]] = None,
+    ):
+        self._debug_hook = debug_hook
+
         self.config_base = config
 
         self.config = replace(self.config_base)
@@ -224,8 +235,12 @@ class Evaluation:
         CONSOLE.log("Setting up inputs...")
         self.input_pipelines = self.__setup_inputs()
 
-        if self.config.runtime.partial_results or PipelineStage.OUTPUT in PipelineStage.between(
-            self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
+        if self._debug_hook is None and (
+            self.config.runtime.partial_results
+            or PipelineStage.OUTPUT
+            in PipelineStage.between(
+                self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
+            )
         ):
             base_embedder: Embedder = None
             if self.config.runtime.skip_embedder or (
@@ -355,31 +370,44 @@ class Evaluation:
         if self.config.runtime.set_read_only is not None:
             self.__set_nested_metadata_key(saved_config, "mode", "read_only", self.config.runtime.set_read_only)
 
-        CONSOLE.log("Validating config...")
-        self.__validate_eval_config(saved_config, self.config.output_dir / "config.yaml")
+        if self._debug_hook is None:
+            CONSOLE.log("Validating config...")
+            self.__validate_eval_config(saved_config, self.config.output_dir / "config.yaml")
+        else:
+            CONSOLE.log("Skip validating config... (debug)")
 
         run_dir = self.__create_run_dir()
 
-        CONSOLE.log("Saving config...")
-        self.__save_eval_config(saved_config, [self.config.output_dir / "config.yaml", run_dir / "config.yaml"])
+        if self._debug_hook is None:
+            CONSOLE.log("Saving config...")
+            self.__save_eval_config(saved_config, [self.config.output_dir / "config.yaml", run_dir / "config.yaml"])
+        else:
+            CONSOLE.log("Skip saving config... (debug)")
 
-        if self.config.runtime.set_read_only is not None:
-            CONSOLE.log(f"Data read-only mode set to {str(self.config.runtime.set_read_only)}...")
-            return False
+        if self._debug_hook is None:
+            if self.config.runtime.set_read_only is not None:
+                CONSOLE.log(f"Data read-only mode set to {str(self.config.runtime.set_read_only)}...")
+                return False
 
-        is_read_only = self.config.runtime.set_read_only or self.__get_nested_metadata_key(
-            self.config, "mode", "read_only", False
-        )
-
-        if is_read_only and not self.config.runtime.results_only:
-            CONSOLE.log(
-                "[bold red]ERROR: Data is read-only. Disable with runtime.set_read_only=False or use runtime.results_only=True."
+            is_read_only = self.config.runtime.set_read_only or self.__get_nested_metadata_key(
+                self.config, "mode", "read_only", False
             )
-            return False
+
+            if is_read_only and not self.config.runtime.results_only:
+                CONSOLE.log(
+                    "[bold red]ERROR: Data is read-only. Disable with runtime.set_read_only=False or use runtime.results_only=True."
+                )
+                return False
+
+        if self._debug_hook is not None:
+            assert self.config.runtime.from_stage == PipelineStage.OUTPUT
+            assert self.config.runtime.to_stage == PipelineStage.OUTPUT
+            is_read_only = False  # Debug won't change anything, but need this to be false to run the pipeline
 
         CONSOLE.log("Starting runs...")
+        progress_log_file_name = "progress.log" if self._debug_hook is None else "progress_debug.log"
         with create_logger(
-            __name__, files=[self.config.output_dir / "progress.log", run_dir / "progress.log"]
+            __name__, files=[self.config.output_dir / progress_log_file_name, run_dir / progress_log_file_name]
         ) as progress_logger_handle:
             stages = PipelineStage.between(
                 self.config.runtime.from_stage, self.config.runtime.to_stage, default=PipelineStage.all()
@@ -407,7 +435,11 @@ class Evaluation:
                 else:
                     aborted = not self.__run_object_by_object(run)
 
-            if (not aborted or self.config.runtime.partial_results) and self.embedder is not None:
+            if (
+                self._debug_hook is None
+                and (not aborted or self.config.runtime.partial_results)
+                and self.embedder is not None
+            ):
                 evaluate_results(
                     self.lvis,
                     self.embedder,
@@ -623,6 +655,7 @@ class Evaluation:
                             parent=run,
                             file=file,
                             stages_filter={stage},
+                            debug_ctx=DebugContext(eval=self, uid=uid, category=category, stage=None, state=None),
                         )
                     )
 
@@ -687,6 +720,7 @@ class Evaluation:
                         parent=run,
                         file=file,
                         stages_filter=None,
+                        debug_ctx=DebugContext(eval=self, uid=uid, category=category, stage=None, state=None),
                     )
                 )
 
@@ -729,56 +763,87 @@ class Evaluation:
         with ProcessResult() as result:
             run.parent.progress_logger.info("Starting pipeline %s", pipeline_str)
 
-            process: Process = None
-            try:
-                stdout_file: Optional[Path] = None
-                stderr_file: Optional[Path] = None
+            if self._debug_hook is None:
+                process: Process = None
+                try:
+                    stdout_file: Optional[Path] = None
+                    stderr_file: Optional[Path] = None
 
-                if self.config.runtime.threads > 1:
-                    pipeline_dir = run.parent.instance.get_pipeline_dir(run.file)
-                    pipeline_dir.mkdir(parents=True, exist_ok=True)
+                    if self.config.runtime.threads > 1:
+                        pipeline_dir = run.parent.instance.get_pipeline_dir(run.file)
+                        pipeline_dir.mkdir(parents=True, exist_ok=True)
 
-                    stdout_file = str((pipeline_dir / "stdout.log").resolve())
-                    stderr_file = str((pipeline_dir / "stderr.log").resolve())
+                        stdout_file = str((pipeline_dir / "stdout.log").resolve())
+                        stderr_file = str((pipeline_dir / "stderr.log").resolve())
 
-                process = start_process(
-                    target=pipeline_worker_func,
-                    args=(
+                    process = start_process(
+                        target=pipeline_worker_func,
+                        args=(
+                            run.parent.instance,
+                            run.file,
+                            run.stages_filter,
+                            result,
+                            stdout_file,
+                            stderr_file,
+                            None,
+                        ),
+                    )
+                    process.join()
+                except Exception as ex:
+                    if handle_errors:
+                        result.success = False
+                        result.msg = traceback.format_exc()
+                    else:
+                        raise ex
+                finally:
+                    if process is not None:
+                        try:
+                            stop_process(process)
+                            process.join()
+                        except Exception:
+                            pass
+
+                        try:
+                            process.close()
+                        except Exception:
+                            pass
+
+                    if result.success:
+                        run.parent.progress_logger.info("Finished pipeline %s", pipeline_str)
+                    elif result.msg is not None:
+                        run.parent.progress_logger.error(
+                            "Failed pipeline %s due to exception:\n%s", pipeline_str, result.msg
+                        )
+                    else:
+                        run.parent.progress_logger.error("Failed pipeline %s due to unknown reason", pipeline_str)
+
+            else:
+                success: bool = False
+                try:
+                    pipeline_worker_func(
                         run.parent.instance,
                         run.file,
                         run.stages_filter,
-                        result,
-                        stdout_file,
-                        stderr_file,
-                    ),
-                )
-                process.join()
-            except Exception as ex:
-                if handle_errors:
-                    result.success = False
-                    result.msg = traceback.format_exc()
-                else:
-                    raise ex
-            finally:
-                try:
-                    stop_process(process)
-                    process.join()
-                except Exception:
-                    pass
-
-                try:
-                    process.close()
-                except Exception:
-                    pass
-
-                if result.success:
-                    run.parent.progress_logger.info("Finished pipeline %s", pipeline_str)
-                elif result.msg is not None:
-                    run.parent.progress_logger.error(
-                        "Failed pipeline %s due to exception:\n%s", pipeline_str, result.msg
+                        None,
+                        None,
+                        None,
+                        lambda stage, state: self._debug_hook(
+                            DebugContext(
+                                eval=self,
+                                uid=run.debug_ctx.uid,
+                                category=run.debug_ctx.category,
+                                stage=stage,
+                                state=state,
+                            )
+                        ),
                     )
-                else:
-                    run.parent.progress_logger.error("Failed pipeline %s due to unknown reason", pipeline_str)
+                    success = True
+                except Exception:
+                    run.parent.progress_logger.error(
+                        "Failed pipeline %s due to exception:\n%s", pipeline_str, traceback.format_exc()
+                    )
+                if success:
+                    run.parent.progress_logger.info("Finished pipeline %s", pipeline_str)
 
             return result.success
 

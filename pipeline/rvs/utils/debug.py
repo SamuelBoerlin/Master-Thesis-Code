@@ -41,6 +41,36 @@ def render_sample_positions(
     )
 
 
+def render_sample_positions_and_colors(
+    file: Path,
+    view: View,
+    normalization: Normalization,
+    sample_positions: NDArray,
+    sample_colors: NDArray,
+    callback: Callable[[View, im.Image], None],
+    render_as_plot: bool = True,
+) -> None:
+    output = RenderOutput(
+        path=None,
+        callback=lambda view, image: render_image_plot(view, image, callback)
+        if render_as_plot
+        else callback(view, image),
+    )
+
+    state = PipelineState(None)
+    state.model_normalization = normalization
+
+    renderer = TrimeshRenderer(TrimeshRendererConfig())
+    renderer.render(
+        file,
+        [view],
+        output,
+        state,
+        sample_positions=sample_positions,
+        sample_colors=sample_colors,
+    )
+
+
 def render_sample_clusters(
     file: Path,
     view: View,

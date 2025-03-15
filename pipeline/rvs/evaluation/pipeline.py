@@ -3,7 +3,7 @@ import hashlib
 import shutil
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import Callable, List, Optional, Set
 
 import torch
 
@@ -54,7 +54,12 @@ class PipelineEvaluationInstance:
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.pipeline_dir.mkdir(parents=True, exist_ok=True)
 
-    def run(self, file: Path, stages_filter: Optional[Set[PipelineStage]] = None) -> None:
+    def run(
+        self,
+        file: Path,
+        stages_filter: Optional[Set[PipelineStage]] = None,
+        debug_hook: Optional[Callable[[PipelineStage, PipelineState], None]] = None,
+    ) -> None:
         io = self.create_pipeline_io(file)
 
         run_stages = self.get_pipeline_stages(stages_filter)
@@ -73,7 +78,7 @@ class PipelineEvaluationInstance:
 
         assert pipeline.config.output_dir == self.get_pipeline_dir(file)
 
-        results = pipeline.run()
+        results = pipeline.run(debug_hook=debug_hook)
 
         index_file = PipelineEvaluationInstance.save_results(results, self.results_dir, file)
         if index_file is not None:

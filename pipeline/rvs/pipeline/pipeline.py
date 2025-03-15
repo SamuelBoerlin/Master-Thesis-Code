@@ -2,7 +2,7 @@ import dataclasses
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type
 
 import numpy as np
 from nerfstudio.configs.experiment_config import ExperimentConfig
@@ -245,19 +245,22 @@ class Pipeline:
                 }
             )
 
-    def run(self) -> "PipelineState":
+    def run(self, debug_hook: Optional[Callable[[PipelineStage, PipelineState], None]] = None) -> "PipelineState":
         pipeline_state = PipelineState(self)
 
-        CONSOLE.log(
-            f"Loading stages: [{', '.join([stage for stage in PipelineStage if not self.should_run_stage(stage) and self.should_load_stage(stage)])}]"
-        )
-        CONSOLE.log(
-            f"Running stages: [{', '.join([stage for stage in PipelineStage if self.should_run_stage(stage)])}]"
-        )
+        if debug_hook is None:
+            CONSOLE.log(
+                f"Loading stages: [{', '.join([stage for stage in PipelineStage if not self.should_run_stage(stage) and self.should_load_stage(stage)])}]"
+            )
+            CONSOLE.log(
+                f"Running stages: [{', '.join([stage for stage in PipelineStage if self.should_run_stage(stage)])}]"
+            )
+        else:
+            CONSOLE.log("Loading all stages (debug)")
 
         pipeline_state.scratch_output_dir = None
 
-        if self.should_run_stage(PipelineStage.SAMPLE_VIEWS):
+        if debug_hook is None and self.should_run_stage(PipelineStage.SAMPLE_VIEWS):
             CONSOLE.log("Generating view transforms...")
 
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__renderer_output_dir / "scratch")
@@ -269,13 +272,17 @@ class Pipeline:
                 view.transform.setflags(write=False)
 
             transforms_path = self.__save_transforms(pipeline_state)
-        elif self.should_load_stage(PipelineStage.SAMPLE_VIEWS):
+        elif debug_hook is not None or self.should_load_stage(PipelineStage.SAMPLE_VIEWS):
             CONSOLE.log("Loading view transforms...")
             transforms_path = self.__load_transforms(pipeline_state)
 
         pipeline_state.scratch_output_dir = None
 
-        if self.should_run_stage(PipelineStage.RENDER_VIEWS):
+        if debug_hook is not None:
+            CONSOLE.log("Running debug hook (SAMPLE_VIEWS)...")
+            debug_hook(PipelineStage.SAMPLE_VIEWS, pipeline_state)
+
+        if debug_hook is None and self.should_run_stage(PipelineStage.RENDER_VIEWS):
             CONSOLE.log("Rendering view images...")
 
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__renderer_output_dir / "scratch")
@@ -311,7 +318,7 @@ class Pipeline:
 
             for view in pipeline_state.training_views:
                 self.__set_view_path(view)
-        elif self.should_load_stage(PipelineStage.RENDER_VIEWS):
+        elif debug_hook is not None or self.should_load_stage(PipelineStage.RENDER_VIEWS):
             CONSOLE.log("Loading normalization...")
             self.__load_model_normalization(pipeline_state)
 
@@ -320,7 +327,11 @@ class Pipeline:
 
         pipeline_state.scratch_output_dir = None
 
-        if self.should_run_stage(PipelineStage.TRAIN_FIELD):
+        if debug_hook is not None:
+            CONSOLE.log("Running debug hook (RENDER_VIEWS)...")
+            debug_hook(PipelineStage.RENDER_VIEWS, pipeline_state)
+
+        if debug_hook is None and self.should_run_stage(PipelineStage.TRAIN_FIELD):
             CONSOLE.log("Training radiance field...")
 
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__field_output_dir / "scratch")
@@ -334,7 +345,7 @@ class Pipeline:
             )
 
             self.field.train()
-        elif self.should_load_stage(PipelineStage.TRAIN_FIELD):
+        elif debug_hook is not None or self.should_load_stage(PipelineStage.TRAIN_FIELD):
             CONSOLE.log("Loading radiance field...")
 
             def has_checkpoint(path: Path) -> bool:
@@ -353,7 +364,11 @@ class Pipeline:
 
         pipeline_state.scratch_output_dir = None
 
-        if self.should_run_stage(PipelineStage.SAMPLE_POSITIONS):
+        if debug_hook is not None:
+            CONSOLE.log("Running debug hook (TRAIN_FIELD)...")
+            debug_hook(PipelineStage.TRAIN_FIELD, pipeline_state)
+
+        if debug_hook is None and self.should_run_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Sampling positions...")
 
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__sampler_output_dir / "scratch")
@@ -384,13 +399,17 @@ class Pipeline:
                         ),
                         render_as_plot=self.config.render_sample_as_plot,
                     )
-        elif self.should_load_stage(PipelineStage.SAMPLE_POSITIONS):
+        elif debug_hook is not None or self.should_load_stage(PipelineStage.SAMPLE_POSITIONS):
             CONSOLE.log("Loading positions...")
             self.__load_sample_positions(pipeline_state)
 
         pipeline_state.scratch_output_dir = None
 
-        if self.should_run_stage(PipelineStage.SAMPLE_EMBEDDINGS):
+        if debug_hook is not None:
+            CONSOLE.log("Running debug hook (SAMPLE_POSITIONS)...")
+            debug_hook(PipelineStage.SAMPLE_POSITIONS, pipeline_state)
+
+        if debug_hook is None and self.should_run_stage(PipelineStage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Sampling embeddings...")
 
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__embedding_output_dir / "scratch")
@@ -418,13 +437,17 @@ class Pipeline:
             assert len(pipeline_state.sample_embeddings_dict) == len(self.config.embeddings)
 
             self.__save_sample_embeddings(pipeline_state)
-        elif self.should_load_stage(PipelineStage.SAMPLE_EMBEDDINGS):
+        elif debug_hook is not None or self.should_load_stage(PipelineStage.SAMPLE_EMBEDDINGS):
             CONSOLE.log("Loading embeddings...")
             self.__load_sample_embeddings(pipeline_state)
 
         pipeline_state.scratch_output_dir = None
 
-        if self.should_run_stage(PipelineStage.TRANSFORM_EMBEDDINGS):
+        if debug_hook is not None:
+            CONSOLE.log("Running debug hook (SAMPLE_EMBEDDINGS)...")
+            debug_hook(PipelineStage.SAMPLE_EMBEDDINGS, pipeline_state)
+
+        if debug_hook is None and self.should_run_stage(PipelineStage.TRANSFORM_EMBEDDINGS):
             CONSOLE.log("Transforming embeddings...")
 
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__transform_output_dir / "scratch")
@@ -476,13 +499,17 @@ class Pipeline:
             assert pipeline_state.transformed_embeddings_type == pipeline_state.sample_embeddings_type
 
             self.__save_embeddings_transform(pipeline_state)
-        elif self.should_load_stage(PipelineStage.TRANSFORM_EMBEDDINGS):
+        elif debug_hook is not None or self.should_load_stage(PipelineStage.TRANSFORM_EMBEDDINGS):
             CONSOLE.log("Loading embeddings transform...")
             self.__load_embeddings_transform(pipeline_state)
 
         pipeline_state.scratch_output_dir = None
 
-        if self.should_run_stage(PipelineStage.CLUSTER_EMBEDDINGS):
+        if debug_hook is not None:
+            CONSOLE.log("Running debug hook (TRANSFORM_EMBEDDINGS)...")
+            debug_hook(PipelineStage.TRANSFORM_EMBEDDINGS, pipeline_state)
+
+        if debug_hook is None and self.should_run_stage(PipelineStage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Clustering embeddings...")
 
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__clustering_output_dir / "scratch")
@@ -521,13 +548,17 @@ class Pipeline:
                         hard_assignments=self.config.render_sample_clusters_hard_assignment,
                         render_as_plot=self.config.render_sample_as_plot,
                     )
-        elif self.should_load_stage(PipelineStage.CLUSTER_EMBEDDINGS):
+        elif debug_hook is not None or self.should_load_stage(PipelineStage.CLUSTER_EMBEDDINGS):
             CONSOLE.log("Loading clusters...")
             self.__load_clusters(pipeline_state)
 
         pipeline_state.scratch_output_dir = None
 
-        if self.should_run_stage(PipelineStage.SELECT_VIEWS):
+        if debug_hook is not None:
+            CONSOLE.log("Running debug hook (CLUSTER_EMBEDDINGS)...")
+            debug_hook(PipelineStage.CLUSTER_EMBEDDINGS, pipeline_state)
+
+        if debug_hook is None and self.should_run_stage(PipelineStage.SELECT_VIEWS):
             CONSOLE.log("Selecting views...")
 
             pipeline_state.scratch_output_dir = self.__io.mk_output_path(self.__selection_output_dir / "scratch")
@@ -571,11 +602,18 @@ class Pipeline:
             for i, view in enumerate(pipeline_state.selected_views):
                 resolved_path = view.resolve_path(self.__io)
                 CONSOLE.log(f"{view.index + 1} ({file_link(resolved_path) if resolved_path is not None else 'N/A'})")
-        elif self.should_load_stage(PipelineStage.SELECT_VIEWS):
+        elif debug_hook is not None or self.should_load_stage(PipelineStage.SELECT_VIEWS):
             CONSOLE.log("Loading selected views...")
             self.__load_selected_views(pipeline_state)
 
         pipeline_state.scratch_output_dir = None
+
+        if debug_hook is not None:
+            CONSOLE.log("Running debug hook (SELECT_VIEWS)...")
+            debug_hook(PipelineStage.SELECT_VIEWS, pipeline_state)
+
+            CONSOLE.log("Running debug hook (OUTPUT)...")
+            debug_hook(PipelineStage.OUTPUT, pipeline_state)
 
         CONSOLE.log("Done...")
 
