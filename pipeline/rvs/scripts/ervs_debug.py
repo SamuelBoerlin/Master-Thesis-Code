@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import matplotlib.cm
+import matplotlib.colors
 import numpy as np
 import tyro
 from lerf.encoders.openclip_encoder import OpenCLIPNetwork
@@ -19,6 +21,7 @@ from lerf.lerf import LERFModel
 from lerf.lerf_pipeline import LERFPipeline
 from matplotlib import pyplot as plt
 from matplotlib.cm import get_cmap
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
 from nerfstudio.data.datamanagers.base_datamanager import DataManager
 from nerfstudio.utils.rich_utils import CONSOLE
@@ -87,10 +90,14 @@ class SampleTextEmbeddingSimilarity(Command):
 
     prompts: List[str] = tyro.MISSING
 
+    flat_color: Optional[List[float]] = field(default_factory=lambda: [0.4, 0.4, 0.4, 1.0])
+
     def _run(self, ctx: DebugContext) -> None:
         if ctx.stage == PipelineStage.SAMPLE_EMBEDDINGS:
             if ctx.state.sample_embeddings_type != DefaultEmbeddingTypes.CLIP:
                 raise ValueError(f"Invalid embedding type {ctx.state.sample_embeddings_type}")
+
+            flat_model_color = np.array(self.flat_color) if self.flat_color is not None else None
 
             lerf_pipeline: LERFPipeline = ctx.state.pipeline.field.trainer.pipeline
             lerf_clip_encoder: OpenCLIPNetwork = lerf_pipeline.image_encoder
@@ -116,8 +123,40 @@ class SampleTextEmbeddingSimilarity(Command):
 
                 similarities[prompt] = sample_similarities
 
+            blank_image = Image.fromarray(
+                np.zeros(
+                    (ctx.state.pipeline.renderer.config.width, ctx.state.pipeline.renderer.config.height, 4),
+                    dtype=np.uint8,
+                )
+            )
+
             renders: List[im.Image] = []
-            labels: List[str] = []
+
+            def callback(v: View, i: im.Image) -> None:
+                nonlocal renders
+                renders.append(i.copy())
+
+            for view_idx in self.views:
+                view: View = None
+
+                for v in ctx.state.training_views:
+                    if v.index == view_idx:
+                        view = v
+
+                if view is None:
+                    raise ValueError(f"View with index {view_idx} not found")
+
+                CONSOLE.log(f"Rendering view={view_idx}")
+
+                render_sample(
+                    ctx.state.pipeline.config.model_file,
+                    view,
+                    ctx.state.model_normalization,
+                    callback=callback,
+                    render_as_plot=False,
+                )
+
+            renders.append(blank_image)
 
             cmap = get_cmap("viridis")
 
@@ -140,12 +179,6 @@ class SampleTextEmbeddingSimilarity(Command):
                     if view is None:
                         raise ValueError(f"View with index {view_idx} not found")
 
-                    image: im.Image = None
-
-                    def callback(v: View, i: im.Image) -> None:
-                        nonlocal image
-                        image = i.copy()
-
                     CONSOLE.log(f"Rendering prompt={prompt} view={view_idx}")
 
                     render_sample_positions_and_colors(
@@ -156,38 +189,47 @@ class SampleTextEmbeddingSimilarity(Command):
                         sample_colors=sample_colors,
                         callback=callback,
                         render_as_plot=False,
+                        flat_model_color=flat_model_color,
                     )
 
-                    assert image is not None
-
-                    renders.append(image)
-
-                    labels.append(f"{prompt}")
-
-            assert len(renders) == len(labels)
+                renders.append(blank_image)
 
             CONSOLE.log("Rendering grid plot")
 
             fig = plt.figure()
 
-            fit_suptitle(
-                fig,
-                lambda: image_grid_plot(
+            def create_grid() -> None:
+                axes = image_grid_plot(
                     fig,
                     renders,
-                    columns=len(self.views),
-                    # labels=labels,
-                    row_labels=self.prompts,
-                    col_labels=[f"View {str(v + 1)}" for v in self.views],
+                    columns=len(self.views) + 1,
+                    row_labels=[None] + self.prompts,
+                    col_labels=[f"View {str(v + 1)}" for v in self.views] + [None],
                     label_face_alpha=0.5,
                     border_color="black",
-                ),
+                    border_alpha=([0.5] * len(self.views) + [0.0]) * (len(self.prompts) + 1),
+                )
+
+                for i in range(len(self.prompts)):
+                    cb_axes = axes[1 + i][len(self.views)]
+                    fig.colorbar(
+                        matplotlib.cm.ScalarMappable(
+                            matplotlib.colors.Normalize(vmin=min_similarity, vmax=max_similarity), cmap=cmap
+                        ),
+                        cax=inset_axes(cb_axes, width="5%", height="100%", loc="center left"),
+                        orientation="vertical",
+                        ticks=np.linspace(min_similarity, max_similarity, 8, endpoint=True),
+                    )
+
+            fit_suptitle(
+                fig,
+                create_grid,
                 suptitle=f"Similarity Between Sample Embeddings of 3D Model '{ctx.uid}'\nfrom Category '{ctx.category}' and Text Prompt Embeddings",
             )
 
-            fig.tight_layout()
-
             fig.set_facecolor((0, 0, 0, 0))
+
+            fig.tight_layout()
 
             save_figure(fig, self.output_dir / "sample_text_embedding_similarity.png")
 
@@ -198,14 +240,14 @@ class SelectedViewEmbeddingSimilarity(Command):
 
     views: List[int] = tyro.MISSING
 
-    flat_color: Optional[List[float]] = field(default_factory=lambda: [0.5, 0.5, 0.5, 1.0])
+    flat_color: Optional[List[float]] = field(default_factory=lambda: [0.4, 0.4, 0.4, 1.0])
 
     def _run(self, ctx: DebugContext) -> None:
         if ctx.stage == PipelineStage.SELECT_VIEWS:
             if self.flat_color is not None and len(self.flat_color) != 4:
                 raise ValueError("len(self.flat_color) != 4")
 
-            flat_model_color = np.array(self.flat_color)
+            flat_model_color = np.array(self.flat_color) if self.flat_color is not None else None
 
             if ctx.state.sample_embeddings_type != DefaultEmbeddingTypes.CLIP:
                 raise ValueError(f"Invalid embedding type {ctx.state.sample_embeddings_type}")
@@ -298,6 +340,8 @@ class SelectedViewEmbeddingSimilarity(Command):
                     render_as_plot=False,
                 )
 
+            renders.append(blank_image)
+
             cmap = get_cmap("viridis")
 
             for j, selected_view in enumerate(selected_views):
@@ -363,30 +407,48 @@ class SelectedViewEmbeddingSimilarity(Command):
                         flat_model_color=flat_model_color,
                     )
 
+                renders.append(blank_image)
+
             CONSOLE.log("Rendering grid plot")
 
             fig = plt.figure()
 
-            fit_suptitle(
-                fig,
-                lambda: image_grid_plot(
+            def create_grid() -> None:
+                axes = image_grid_plot(
                     fig,
                     renders,
-                    columns=len(self.views) + 2,
-                    # labels=labels,
+                    columns=len(self.views) + 2 + 1,
                     row_labels=[None] + [f"Selected View {str(v.index + 1)}" for v in selected_views],
-                    col_labels=["Selected View", "Cluster"] + [f"View {str(v + 1)}" for v in self.views],
-                    col_label_offsets=[1, 1] + [0] * len(self.views),
+                    col_labels=["Selected View", "Cluster"] + [f"View {str(v + 1)}" for v in self.views] + [None],
+                    col_label_offsets=[1, 1] + [0] * (len(self.views) + 1),
                     label_face_alpha=0.5,
                     border_color="black",
-                    border_alpha=[0.0, 0.0] + [0.5] * (len(renders) - 2),
-                ),
+                    border_alpha=[0.0, 0.0]
+                    + [0.5] * len(self.views)
+                    + [0.0]
+                    + ([0.5] * (len(self.views) + 2) + [0.0]) * len(selected_views),
+                )
+
+                for i in range(len(selected_views)):
+                    cb_axes = axes[1 + i][len(self.views) + 2 + 1 - 1]
+                    fig.colorbar(
+                        matplotlib.cm.ScalarMappable(
+                            matplotlib.colors.Normalize(vmin=min_similarity, vmax=max_similarity), cmap=cmap
+                        ),
+                        cax=inset_axes(cb_axes, width="5%", height="100%", loc="center left"),
+                        orientation="vertical",
+                        ticks=np.linspace(min_similarity, max_similarity, 8, endpoint=True),
+                    )
+
+            fit_suptitle(
+                fig,
+                create_grid,
                 suptitle=f"Similarity Between Sample Embeddings of 3D Model '{ctx.uid}'\nfrom Category '{ctx.category}' and Selected Views Embeddings",
             )
 
-            fig.tight_layout()
-
             fig.set_facecolor((0, 0, 0, 0))
+
+            fig.tight_layout()
 
             save_figure(fig, self.output_dir / "selected_view_embedding_similarity.png")
 
