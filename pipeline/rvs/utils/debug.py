@@ -20,6 +20,7 @@ def render_sample(
     callback: Callable[[View, im.Image], None],
     render_as_plot: bool = True,
     flat_model_color: Optional[NDArray] = None,
+    projection_callback: Optional[Callable[[NDArray], None]] = None,
 ) -> None:
     output = RenderOutput(
         path=None,
@@ -38,6 +39,7 @@ def render_sample(
         output,
         state,
         flat_model_color=flat_model_color,
+        projection_callback=projection_callback,
     )
 
 
@@ -49,6 +51,8 @@ def render_sample_positions(
     callback: Callable[[View, im.Image], None],
     render_as_plot: bool = True,
     flat_model_color: Optional[NDArray] = None,
+    projection_callback: Optional[Callable[[NDArray], None]] = None,
+    render_sample_positions: bool = True,
 ) -> None:
     output = RenderOutput(
         path=None,
@@ -68,6 +72,8 @@ def render_sample_positions(
         state,
         sample_positions=sample_positions,
         flat_model_color=flat_model_color,
+        projection_callback=projection_callback,
+        render_sample_positions=render_sample_positions,
     )
 
 
@@ -80,6 +86,8 @@ def render_sample_positions_and_colors(
     callback: Callable[[View, im.Image], None],
     render_as_plot: bool = True,
     flat_model_color: Optional[NDArray] = None,
+    projection_callback: Optional[Callable[[NDArray], None]] = None,
+    render_sample_positions: bool = True,
 ) -> None:
     output = RenderOutput(
         path=None,
@@ -100,6 +108,8 @@ def render_sample_positions_and_colors(
         sample_positions=sample_positions,
         sample_colors=sample_colors,
         flat_model_color=flat_model_color,
+        projection_callback=projection_callback,
+        render_sample_positions=render_sample_positions,
     )
 
 
@@ -116,6 +126,7 @@ def render_sample_clusters(
     hard_assignments: bool = False,
     render_as_plot: bool = True,
     flat_model_color: Optional[NDArray] = None,
+    projection_callback: Optional[Callable[[NDArray], None]] = None,
 ) -> None:
     num_samples = sample_embeddings.shape[0]
 
@@ -155,6 +166,7 @@ def render_sample_clusters(
         sample_positions=sample_positions,
         sample_colors=sample_colors,
         flat_model_color=flat_model_color,
+        projection_callback=projection_callback,
     )
 
 
@@ -169,6 +181,7 @@ def render_sample_kmeans_clusters_with_cosine_similarity(
     hard_assignments: bool = False,
     render_as_plot: bool = True,
     flat_model_color: Optional[NDArray] = None,
+    projection_callback: Optional[Callable[[NDArray], None]] = None,
 ) -> None:
     num_clusters = cluster_centroids.shape[0]
     num_samples = sample_embeddings.shape[0]
@@ -218,6 +231,7 @@ def render_sample_kmeans_clusters_with_cosine_similarity(
         sample_positions=sample_positions,
         sample_colors=sample_colors,
         flat_model_color=flat_model_color,
+        projection_callback=projection_callback,
     )
 
 

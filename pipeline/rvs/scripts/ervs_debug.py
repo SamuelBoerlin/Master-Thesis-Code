@@ -1,6 +1,7 @@
 import os
 
 import torch
+from sklearn.decomposition import PCA
 from torch import Tensor
 
 # TODO: This should probably be elsewhere
@@ -20,7 +21,9 @@ from lerf.encoders.openclip_encoder import OpenCLIPNetwork
 from lerf.lerf import LERFModel
 from lerf.lerf_pipeline import LERFPipeline
 from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 from matplotlib.cm import get_cmap
+from matplotlib.patches import ConnectionPatch
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
 from nerfstudio.data.datamanagers.base_datamanager import DataManager
@@ -34,7 +37,7 @@ from rvs.pipeline.embedding import DefaultEmbeddingTypes
 from rvs.pipeline.stage import PipelineStage
 from rvs.pipeline.views import View
 from rvs.utils.config import find_config_working_dir, load_config
-from rvs.utils.debug import render_sample, render_sample_positions_and_colors
+from rvs.utils.debug import render_sample, render_sample_positions, render_sample_positions_and_colors
 from rvs.utils.plot import fit_suptitle, image_grid_plot, save_figure
 
 
@@ -453,9 +456,188 @@ class SelectedViewEmbeddingSimilarity(Command):
             save_figure(fig, self.output_dir / "selected_view_embedding_similarity.png")
 
 
+@dataclass
+class EmbeddingPCACorrespondence(Command):
+    views: List[int] = tyro.MISSING
+
+    num_lines: int = 30
+
+    flat_color: Optional[List[float]] = None  # field(default_factory=lambda: [0.4, 0.4, 0.4, 1.0])
+
+    render_sample_positions: bool = False
+
+    def _run(self, ctx: DebugContext) -> None:
+        if ctx.stage == PipelineStage.SAMPLE_EMBEDDINGS:
+            flat_model_color = np.array(self.flat_color) if self.flat_color is not None else None
+
+            CONSOLE.log("Calculating PCA")
+            pca = PCA(n_components=2)
+            pca.fit(ctx.state.sample_embeddings)
+            pca_datapoints = pca.transform(ctx.state.sample_embeddings)
+
+            renders: List[im.Image] = []
+            projections: List[NDArray] = []
+
+            def render_callback(v: View, i: im.Image) -> None:
+                nonlocal renders
+                renders.append(i.copy())
+
+            def projection_callback(p: NDArray) -> None:
+                nonlocal projections
+                projections.append(p)
+
+            for view_idx in self.views:
+                view: View = None
+
+                for v in ctx.state.training_views:
+                    if v.index == view_idx:
+                        view = v
+
+                if view is None:
+                    raise ValueError(f"View with index {view_idx} not found")
+
+                CONSOLE.log(f"Rendering view={view_idx}")
+
+                render_sample_positions(
+                    ctx.state.pipeline.config.model_file,
+                    view,
+                    ctx.state.model_normalization,
+                    ctx.state.sample_positions,
+                    callback=render_callback,
+                    render_as_plot=False,
+                    flat_model_color=flat_model_color,
+                    projection_callback=projection_callback,
+                    render_sample_positions=False,
+                )
+
+            assert len(renders) == len(projections)
+
+            CONSOLE.log("Creating plots")
+
+            axes: List[List[Axes]]
+
+            fig, axes = plt.subplots(nrows=len(renders), ncols=2)
+
+            if isinstance(axes[0], Axes):
+                axes = [axes]
+
+            fig_scale = 2.0
+            fig.set_size_inches(6.4 * fig_scale, 4.8 * fig_scale * len(self.views))
+
+            fig.suptitle(
+                f"PCA of Sample Embeddings of 3D Model '{ctx.uid}'\nfrom Category '{ctx.category}'",
+                bbox={
+                    "facecolor": fig.get_facecolor(),
+                    "alpha": 0.5,
+                    "boxstyle": "square",
+                    "edgecolor": "none",
+                    "linewidth": 0,
+                },
+                fontsize=18,
+                verticalalignment="top",
+                y=1.0,
+            )
+
+            for i in range(len(renders)):
+                image = renders[i]
+                image_projections = projections[i]
+
+                visible_indices = np.nonzero(image_projections[:, 3] >= 0.5)[0]
+                invisible_indices = np.nonzero(image_projections[:, 3] < 0.5)[0]
+
+                visible_positions = image_projections[visible_indices, :2] * np.array([image.width, image.height])
+                visible_datapoints = pca_datapoints[visible_indices]
+                invisible_datapoints = pca_datapoints[invisible_indices]
+
+                # axes[i][0].set_aspect("equal")
+
+                visible_scatter = axes[i][0].scatter(visible_datapoints[:, 0], visible_datapoints[:, 1], s=10.0)
+                visible_scatter_colors = visible_scatter.get_facecolors()
+
+                axes[i][0].scatter(invisible_datapoints[:, 0], invisible_datapoints[:, 1], s=1.0, alpha=0.5)
+
+                axes[i][0].set_xlabel("PC1")
+                axes[i][0].set_ylabel("PC2")
+                axes[i][0].legend(["Visible", "Obstructed"])
+
+                axes[i][1].axis("off")
+                axes[i][1].set_aspect("equal")
+
+                axes[i][1].imshow(image)
+                # axes[i][1].scatter(visible_positions[:, 0], visible_positions[:, 1], s=0.5)
+
+                random_indices: NDArray[np.signedinteger] = np.random.choice(
+                    np.arange(0, visible_positions.shape[0]),
+                    size=min(self.num_lines, visible_positions.shape[0]),
+                    replace=False,
+                )
+
+                lines_a_x: List[float] = []
+                lines_a_y: List[float] = []
+
+                lines_b_x: List[float] = []
+                lines_b_y: List[float] = []
+
+                lines_color: List[int] = []
+
+                for j in range(random_indices.shape[0]):
+                    idx = random_indices[j]
+
+                    a = (visible_positions[idx, 0], visible_positions[idx, 1])
+                    b = (visible_datapoints[idx, 0], visible_datapoints[idx, 1])
+
+                    color = None
+                    if isinstance(visible_scatter_colors, List):
+                        if idx < len(visible_scatter_colors):
+                            color = visible_scatter_colors[idx]
+                        else:
+                            color = visible_scatter_colors[0]
+                    else:
+                        color = visible_scatter_colors
+
+                    connection_patch = ConnectionPatch(
+                        xyA=a,
+                        xyB=b,
+                        coordsA="data",
+                        coordsB="data",
+                        axesA=axes[i][1],
+                        axesB=axes[i][0],
+                        color=color,
+                    )
+
+                    axes[i][1].add_artist(connection_patch)
+
+                    lines_a_x.append(a[0])
+                    lines_a_y.append(a[1])
+
+                    lines_b_x.append(b[0])
+                    lines_b_y.append(b[1])
+
+                    lines_color.append(color)
+
+                for j in range(len(lines_a_x)):
+                    a_x = lines_a_x[j]
+                    a_y = lines_a_y[j]
+
+                    b_x = lines_b_x[j]
+                    b_y = lines_b_y[j]
+
+                    color = lines_color[j]
+
+                    axes[i][1].scatter(a_x, a_y, s=30.0, color=color, edgecolors="black")
+                    axes[i][0].scatter(b_x, b_y, s=30.0, color=color, edgecolors="black")
+
+            fig.set_facecolor((0, 0, 0, 0))
+
+            # fig.tight_layout()
+
+            save_figure(fig, self.output_dir / "pca_correspondence.png")
+
+
 commands = {
     "sample_text_embedding_similarity": SampleTextEmbeddingSimilarity(),
     "selected_view_embedding_similarity": SelectedViewEmbeddingSimilarity(),
+    "pca_correspondence": EmbeddingPCACorrespondence(),
 }
 
 SubcommandTypeUnion = tyro.conf.SuppressFixed[

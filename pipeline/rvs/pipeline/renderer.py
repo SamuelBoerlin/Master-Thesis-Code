@@ -1,10 +1,11 @@
 import io
+import math
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from multiprocessing import Process
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 import numpy as np
 import pyglet
@@ -101,6 +102,19 @@ class TrimeshRendererConfig(RendererConfig):
     """Size of sample spheres"""
 
 
+class _TrimeshDummyGrid:
+    __callback: Callable[[], None]
+
+    def __init__(self, callback: Callable[[], None]) -> None:
+        self.__callback = callback
+
+    def delete(self) -> None:
+        pass
+
+    def draw(self, mode: int) -> None:
+        self.__callback()
+
+
 class TrimeshRenderer(Renderer):
     config: TrimeshRendererConfig
 
@@ -117,6 +131,10 @@ class TrimeshRenderer(Renderer):
         sample_positions: Optional[NDArray] = None,
         sample_colors: Optional[NDArray] = None,
         flat_model_color: Optional[NDArray] = None,
+        projection_callback: Optional[Callable[[View, NDArray], None]] = None,
+        projection_depth_test: bool = True,
+        projection_depth_test_eps: float = 0.0001,
+        render_sample_positions: bool = True,
     ) -> Normalization:
         obj = trimesh.load(file, skip_materials=flat_model_color is not None)
 
@@ -141,15 +159,15 @@ class TrimeshRenderer(Renderer):
         else:
             scene, normalization = normalize_scene_auto(scene)
 
-        if sample_positions is not None:
-            self.add_sample_positions(scene, sample_positions, sample_colors=sample_colors)
-
         # Need to set alpha_size=8 to enable alpha channel. This is not set by default and it seems
         # in the headless environment it defaults to 0 which of course disables the alpha channel.
         # Other defaults are taken from trimesh SceneViewer.__init__()
         pyglet_conf = gl.Config(sample_buffers=1, samples=4, depth_size=24, double_buffer=True, alpha_size=8)
 
         scene.camera.fov = np.array([self.config.fov_x, self.config.fov_y])
+
+        def viewer_callback(scene: Any):
+            pass
 
         viewer = SceneViewer(
             scene,
@@ -161,7 +179,114 @@ class TrimeshRenderer(Renderer):
             flags={
                 "cull": False,
             },
+            callback=viewer_callback,  # Seems to be required to update buffers after scene modification
         )
+
+        current_rendering_view: int = -1
+
+        if projection_callback is not None and sample_positions is not None:
+            depth_maps: Optional[List[NDArray]] = None
+
+            if projection_depth_test:
+                mesh: Trimesh = scene.to_mesh()
+
+                depth_maps = []
+
+                for view in views:
+                    scene.camera_transform = view.transform
+
+                    # Based on https://github.com/mikedh/trimesh/blob/main/examples/raytrace.py but without normalization
+                    origins, vectors, pixels = scene.camera_rays()
+
+                    points, index_ray, _ = mesh.ray.intersects_location(origins, vectors, multiple_hits=False)
+
+                    depth_values = trimesh.util.diagonal_dot(points - origins[0], vectors[index_ray])
+
+                    pixel_ray = pixels[index_ray]
+
+                    depth_map = np.zeros(scene.camera.resolution)
+
+                    depth_map[pixel_ray[:, 0], pixel_ray[:, 1]] = depth_values
+
+                    depth_maps.append(depth_map)
+
+            if depth_maps is not None:
+                assert len(depth_maps) == len(views)
+
+            def draw_callback() -> None:
+                nonlocal current_rendering_view
+                nonlocal sample_positions
+                nonlocal depth_maps
+
+                if current_rendering_view >= 0:
+                    modelview_matrix = (gl.GLdouble * 16)()
+                    gl.glGetDoublev(gl.GL_MODELVIEW_MATRIX, modelview_matrix)
+
+                    projection_matrix = (gl.GLdouble * 16)()
+                    gl.glGetDoublev(gl.GL_PROJECTION_MATRIX, projection_matrix)
+
+                    viewport_matrix = (gl.GLint * 4)()
+                    gl.glGetIntegerv(gl.GL_VIEWPORT, viewport_matrix)
+
+                    x = (gl.GLdouble)()
+                    y = (gl.GLdouble)()
+                    z = (gl.GLdouble)()
+
+                    p: List[List[float]] = []
+
+                    for i in range(sample_positions.shape[0]):
+                        gl.gluProject(
+                            sample_positions[i][0],
+                            sample_positions[i][1],
+                            sample_positions[i][2],
+                            modelview_matrix,
+                            projection_matrix,
+                            viewport_matrix,
+                            x,
+                            y,
+                            z,
+                        )
+
+                        wx = x.value
+                        wy = y.value
+                        wz = z.value
+
+                        # https://learnopengl.com/Advanced-OpenGL/Depth-testing (Visualizing the depth buffer)
+                        z_near = scene.camera.z_near
+                        z_far = scene.camera.z_far
+                        z_ndc = wz * 2.0 - 1.0
+                        z_linear = (2.0 * z_near * z_far) / (z_far + z_near - z_ndc * (z_far - z_near))
+
+                        depth_test = 1
+
+                        if depth_maps is not None and projection_depth_test:
+                            ix = math.floor(wx)
+                            iy = math.floor(wy)
+
+                            depth_map = depth_maps[current_rendering_view]
+
+                            if ix >= 0 and ix < depth_map.shape[0] and iy >= 0 and iy < depth_map.shape[1]:
+                                depth = depth_map[ix, iy]
+
+                                if z_linear > depth + projection_depth_test_eps:
+                                    depth_test = 0
+                            else:
+                                depth_test = 0
+
+                        p.append([wx / self.config.width, 1.0 - wy / self.config.height, z_linear, depth_test])
+
+                    projection_callback(np.array(p))
+
+            dummy_grid = _TrimeshDummyGrid(draw_callback)
+
+            viewer._grid = dummy_grid
+            viewer.toggle_grid()
+
+            assert viewer.view["grid"]
+            assert viewer._grid == dummy_grid
+
+        if sample_positions is not None and render_sample_positions:
+            self.add_sample_positions(scene, sample_positions, sample_colors=sample_colors)
 
         try:
 
@@ -175,10 +300,14 @@ class TrimeshRenderer(Renderer):
             for _ in range(2):
                 redraw_viewer()
 
-            for view in views:
+            for i, view in enumerate(views):
                 scene.camera_transform = view.transform
 
-                redraw_viewer()
+                current_rendering_view = i
+                try:
+                    redraw_viewer()
+                finally:
+                    current_rendering_view = -1
 
                 with io.BytesIO() as buffer:
                     viewer.save_image(buffer)
