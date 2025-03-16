@@ -135,6 +135,7 @@ class TrimeshRenderer(Renderer):
         projection_depth_test: bool = True,
         projection_depth_test_eps: float = 0.0001,
         render_sample_positions: bool = True,
+        render_model: bool = True,
     ) -> Normalization:
         obj = trimesh.load(file, skip_materials=flat_model_color is not None)
 
@@ -143,14 +144,34 @@ class TrimeshRenderer(Renderer):
 
         scene: Scene = obj
 
-        if flat_model_color is not None:
+        if not render_model:
             from trimesh import Trimesh, util
+            from trimesh.visual.color import ColorVisuals
             from trimesh.visual.material import SimpleMaterial
 
             for geometry in list(scene.geometry.values()):
                 if util.is_instance_named(geometry, "Trimesh"):
                     tm: Trimesh = geometry
-                    tm.visual.material = SimpleMaterial(diffuse=flat_model_color)
+                    tm.visual = ColorVisuals(
+                        mesh=tm,
+                        face_colors=np.zeros((4,), dtype=np.uint8),
+                        vertex_colors=np.zeros((4,), dtype=np.uint8),
+                    )
+
+        elif flat_model_color is not None:
+            from trimesh import Trimesh, util
+            from trimesh.visual.material import SimpleMaterial
+            from trimesh.visual.texture import TextureVisuals
+
+            mat = SimpleMaterial(diffuse=flat_model_color)
+            vis = TextureVisuals(material=mat)
+
+            for geometry in list(scene.geometry.values()):
+                if util.is_instance_named(geometry, "Trimesh"):
+                    tm: Trimesh = geometry
+                    tm.visual = vis
+                    # if hasattr(tm.visual, "material"):
+                    #    tm.visual.material = mat
 
         normalization = pipeline_state.model_normalization
 

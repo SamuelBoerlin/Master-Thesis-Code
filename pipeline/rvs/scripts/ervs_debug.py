@@ -11,7 +11,7 @@ os.environ["PYGLET_HEADLESS"] = "1"
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import matplotlib.cm
 import matplotlib.colors
@@ -29,6 +29,7 @@ from matplotlib.patches import ConnectionPatch
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
 from nerfstudio.data.datamanagers.base_datamanager import DataManager
+from nerfstudio.fields.base_field import Field
 from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.typing import NDArray
 from PIL import Image, Image as im
@@ -461,6 +462,229 @@ class SelectedViewEmbeddingSimilarity(Command):
 
 
 @dataclass
+class FieldDensity(Command):
+    views: List[int] = tyro.MISSING
+
+    num_contractions: int = 3
+    num_expansions: int = 3
+
+    contraction_factor: float = 0.85
+    expansion_factor: float = 1.0 / 0.85
+
+    per_view_scale: bool = True
+
+    lower_scale_percentile: float = 5.0
+    upper_scale_percentile: float = 95.0
+
+    flat_color: Optional[List[float]] = field(default_factory=lambda: [0.4, 0.4, 0.4, 1.0])
+
+    def _run(self, ctx: DebugContext) -> None:
+        if ctx.stage == PipelineStage.SAMPLE_POSITIONS:
+            if self.flat_color is not None and len(self.flat_color) != 4:
+                raise ValueError("len(self.flat_color) != 4")
+
+            flat_model_color = np.array(self.flat_color) if self.flat_color is not None else None
+
+            lerf_pipeline: LERFPipeline = ctx.state.pipeline.field.trainer.pipeline
+            lerf_model: LERFModel = lerf_pipeline.model
+
+            base_positions = ctx.state.sample_positions
+
+            positions: Dict[int, NDArray] = dict()
+            densities: Dict[int, NDArray] = dict()
+
+            min_density: float = np.nan
+            max_density: float = np.nan
+
+            for i in reversed(list(range(self.num_contractions))):
+                contracted_positions = base_positions * (self.contraction_factor ** (i + 1))
+                positions[-(i + 1)] = contracted_positions
+                densities[-(i + 1)] = self.__sample_densities(lerf_model.field, lerf_model.device, contracted_positions)
+
+            positions[0] = base_positions
+            densities[0] = self.__sample_densities(lerf_model.field, lerf_model.device, base_positions)
+
+            for i in range(self.num_expansions):
+                expanded_positions = base_positions * (self.expansion_factor ** (i + 1))
+                positions[i + 1] = expanded_positions
+                densities[i + 1] = self.__sample_densities(lerf_model.field, lerf_model.device, expanded_positions)
+
+            all_densities = np.concatenate([ds for ds in densities.values()])
+            min_density = np.nanpercentile(all_densities, self.lower_scale_percentile)
+            max_density = np.nanpercentile(all_densities, self.upper_scale_percentile)
+
+            visible_indices: List[NDArray] = []
+
+            def projection_callback(p: NDArray) -> None:
+                nonlocal visible_indices
+                visible_indices.append(np.nonzero(p[:, 3] >= 0.5)[0])
+
+            for view_idx in self.views:
+                view: View = None
+
+                for v in ctx.state.training_views:
+                    if v.index == view_idx:
+                        view = v
+
+                if view is None:
+                    raise ValueError(f"View with index {view_idx} not found")
+
+                def noop_render_callback(v: View, i: im.Image):
+                    pass
+
+                # Just to determine which positions are visible
+                render_sample_positions(
+                    ctx.state.pipeline.config.model_file,
+                    view,
+                    ctx.state.model_normalization,
+                    ctx.state.sample_positions,
+                    callback=noop_render_callback,
+                    render_as_plot=False,
+                    flat_model_color=np.zeros((4,)),
+                    projection_callback=projection_callback,
+                    render_sample_positions=False,
+                )
+
+            assert len(visible_indices) == len(self.views)
+
+            renders: List[List[im.Image]] = []
+
+            cmap = get_cmap("viridis")
+
+            blank_image = Image.fromarray(
+                np.zeros(
+                    (ctx.state.pipeline.renderer.config.width, ctx.state.pipeline.renderer.config.height, 4),
+                    dtype=np.uint8,
+                )
+            )
+
+            local_min_densities: List[float] = []
+            local_max_densities: List[float] = []
+
+            for i, view_idx in enumerate(self.views):
+                view: View = None
+
+                for v in ctx.state.training_views:
+                    if v.index == view_idx:
+                        view = v
+
+                if view is None:
+                    raise ValueError(f"View with index {view_idx} not found")
+
+                local_min_density = min_density
+                local_max_density = max_density
+
+                if self.per_view_scale:
+                    local_visible_densities = np.concatenate(
+                        [densities[j][visible_indices[i]] for j in positions.keys()]
+                    )
+                    local_min_density = np.nanpercentile(local_visible_densities, self.lower_scale_percentile)
+                    local_max_density = np.nanpercentile(local_visible_densities, self.upper_scale_percentile)
+
+                local_min_densities.append(local_min_density)
+                local_max_densities.append(local_max_density)
+
+                for j in sorted(list(positions.keys())):
+                    visible_positions = positions[j][visible_indices[i], :]
+                    visible_densities = densities[j][visible_indices[i]]
+
+                    assert visible_positions.shape[0] == visible_densities.shape[0]
+
+                    sample_render: im.Image = None
+
+                    def sample_render_callback(v: View, i: im.Image) -> None:
+                        nonlocal sample_render
+                        sample_render = i.copy()
+
+                    sample_colors = np.zeros((visible_densities.shape[0], 3))
+                    for k in range(visible_densities.shape[0]):
+                        sample_colors[k] = cmap(
+                            np.clip(
+                                (visible_densities[k] - local_min_density) / (local_max_density - local_min_density),
+                                0.0,
+                                1.0,
+                            )
+                        )[:3]
+
+                    render_sample_positions_and_colors(
+                        ctx.state.pipeline.config.model_file,
+                        view,
+                        ctx.state.model_normalization,
+                        visible_positions,
+                        sample_colors,
+                        callback=sample_render_callback,
+                        render_as_plot=False,
+                        flat_model_color=np.zeros((4,)),
+                        render_model=False,
+                    )
+
+                    assert sample_render is not None
+
+                    model_render: im.Image = None
+
+                    def model_render_callback(v: View, i: im.Image) -> None:
+                        nonlocal model_render
+                        model_render = i.copy()
+
+                    render_sample(
+                        ctx.state.pipeline.config.model_file,
+                        view,
+                        ctx.state.model_normalization,
+                        callback=model_render_callback,
+                        render_as_plot=False,
+                        flat_model_color=flat_model_color,
+                    )
+
+                    assert model_render is not None
+
+                    assert model_render.width == sample_render.width
+                    assert model_render.height == sample_render.height
+
+                    renders.append(im.alpha_composite(model_render, sample_render))
+
+                    sample_render.close()
+                    model_render.close()
+
+                renders.append(blank_image)
+
+            fig = plt.figure()
+
+            axes = image_grid_plot(
+                fig,
+                renders,
+                columns=self.num_contractions + 1 + self.num_expansions + 1,
+                col_labels=[str(scale) if scale <= 0 else f"+{str(scale)}" for scale in sorted(list(positions.keys()))]
+                + [None],
+                row_labels=[f"View {str(v + 1)}" for v in self.views],
+                label_face_alpha=0.5,
+                border_color="black",
+                border_alpha=([0.5] * (self.num_contractions + 1 + self.num_expansions + 1 - 1) + [0.0])
+                * len(self.views),
+            )
+
+            for i in range(len(self.views)):
+                cb_axes = axes[i][-1]
+                fig.colorbar(
+                    matplotlib.cm.ScalarMappable(
+                        matplotlib.colors.Normalize(vmin=local_min_densities[i], vmax=local_max_densities[i]), cmap=cmap
+                    ),
+                    cax=inset_axes(cb_axes, width="5%", height="100%", loc="center left"),
+                    orientation="vertical",
+                    ticks=np.linspace(local_min_densities[i], local_max_densities[i], 8, endpoint=True),
+                )
+
+            fig.set_facecolor((0, 0, 0, 0))
+
+            fig.tight_layout()
+
+            save_figure(fig, self.output_dir / "field_densities.png")
+
+    def __sample_densities(self, field: Field, device: Any, positions: NDArray) -> NDArray:
+        with torch.no_grad():
+            return field.density_fn(torch.from_numpy(positions).to(device)).detach().squeeze().cpu().numpy()
+
+
+@dataclass
 class EmbeddingCorrespondence(Command):
     views: List[int] = tyro.MISSING
 
@@ -759,6 +983,7 @@ commands = {
     "pca_correspondence": EmbeddingPCACorrespondence(),
     "umap_correspondence": EmbeddingUMAPCorrespondence(),
     "tsne_correspondence": EmbeddingTSNECorrespondence(),
+    "field_density": FieldDensity(),
 }
 
 SubcommandTypeUnion = tyro.conf.SuppressFixed[

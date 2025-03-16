@@ -53,6 +53,7 @@ def render_sample_positions(
     flat_model_color: Optional[NDArray] = None,
     projection_callback: Optional[Callable[[NDArray], None]] = None,
     render_sample_positions: bool = True,
+    render_model: bool = True,
 ) -> None:
     output = RenderOutput(
         path=None,
@@ -74,6 +75,7 @@ def render_sample_positions(
         flat_model_color=flat_model_color,
         projection_callback=projection_callback,
         render_sample_positions=render_sample_positions,
+        render_model=render_model,
     )
 
 
@@ -88,6 +90,7 @@ def render_sample_positions_and_colors(
     flat_model_color: Optional[NDArray] = None,
     projection_callback: Optional[Callable[[NDArray], None]] = None,
     render_sample_positions: bool = True,
+    render_model: bool = True,
 ) -> None:
     output = RenderOutput(
         path=None,
@@ -110,6 +113,7 @@ def render_sample_positions_and_colors(
         flat_model_color=flat_model_color,
         projection_callback=projection_callback,
         render_sample_positions=render_sample_positions,
+        render_model=render_model,
     )
 
 
