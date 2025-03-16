@@ -17,12 +17,14 @@ import matplotlib.cm
 import matplotlib.colors
 import numpy as np
 import tyro
+import umap
 from lerf.encoders.openclip_encoder import OpenCLIPNetwork
 from lerf.lerf import LERFModel
 from lerf.lerf_pipeline import LERFPipeline
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.cm import get_cmap
+from matplotlib.figure import Figure
 from matplotlib.patches import ConnectionPatch
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
@@ -30,6 +32,7 @@ from nerfstudio.data.datamanagers.base_datamanager import DataManager
 from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.typing import NDArray
 from PIL import Image, Image as im
+from sklearn.manifold import TSNE
 
 from rvs.evaluation.debug import DebugContext
 from rvs.evaluation.evaluation import Evaluation, EvaluationConfig
@@ -39,6 +42,7 @@ from rvs.pipeline.views import View
 from rvs.utils.config import find_config_working_dir, load_config
 from rvs.utils.debug import render_sample, render_sample_positions, render_sample_positions_and_colors
 from rvs.utils.plot import fit_suptitle, image_grid_plot, save_figure
+from rvs.utils.random import derive_rng
 
 
 @dataclass
@@ -457,23 +461,34 @@ class SelectedViewEmbeddingSimilarity(Command):
 
 
 @dataclass
-class EmbeddingPCACorrespondence(Command):
+class EmbeddingCorrespondence(Command):
     views: List[int] = tyro.MISSING
 
     num_lines: int = 30
+
+    lines_seed: Optional[int] = 42
 
     flat_color: Optional[List[float]] = None  # field(default_factory=lambda: [0.4, 0.4, 0.4, 1.0])
 
     render_sample_positions: bool = False
 
+    _xlabel: Optional[str] = "D1"
+    _ylabel: Optional[str] = "D2"
+
+    def _create_datapoints(self, ctx: DebugContext) -> NDArray:
+        pass
+
+    def _save_fig(self, fig: Figure) -> None:
+        pass
+
+    def _get_title(self, ctx: DebugContext) -> Optional[str]:
+        pass
+
     def _run(self, ctx: DebugContext) -> None:
         if ctx.stage == PipelineStage.SAMPLE_EMBEDDINGS:
             flat_model_color = np.array(self.flat_color) if self.flat_color is not None else None
 
-            CONSOLE.log("Calculating PCA")
-            pca = PCA(n_components=2)
-            pca.fit(ctx.state.sample_embeddings)
-            pca_datapoints = pca.transform(ctx.state.sample_embeddings)
+            datapoints = self._create_datapoints(ctx)
 
             renders: List[im.Image] = []
             projections: List[NDArray] = []
@@ -524,19 +539,27 @@ class EmbeddingPCACorrespondence(Command):
             fig_scale = 2.0
             fig.set_size_inches(6.4 * fig_scale, 4.8 * fig_scale * len(self.views))
 
-            fig.suptitle(
-                f"PCA of Sample Embeddings of 3D Model '{ctx.uid}'\nfrom Category '{ctx.category}'",
-                bbox={
-                    "facecolor": fig.get_facecolor(),
-                    "alpha": 0.5,
-                    "boxstyle": "square",
-                    "edgecolor": "none",
-                    "linewidth": 0,
-                },
-                fontsize=18,
-                verticalalignment="top",
-                y=1.0,
-            )
+            title = self._get_title(ctx)
+            if title is not None:
+                fig.suptitle(
+                    title,
+                    bbox={
+                        "facecolor": fig.get_facecolor(),
+                        "alpha": 0.5,
+                        "boxstyle": "square",
+                        "edgecolor": "none",
+                        "linewidth": 0,
+                    },
+                    fontsize=18,
+                    verticalalignment="top",
+                    y=1.0,
+                )
+
+            lines_seed = self.lines_seed
+            if lines_seed is None:
+                lines_seed = np.random.randint(0, 2**32 - 1)
+
+            lines_rng = derive_rng(str(lines_seed).encode())
 
             for i in range(len(renders)):
                 image = renders[i]
@@ -546,8 +569,8 @@ class EmbeddingPCACorrespondence(Command):
                 invisible_indices = np.nonzero(image_projections[:, 3] < 0.5)[0]
 
                 visible_positions = image_projections[visible_indices, :2] * np.array([image.width, image.height])
-                visible_datapoints = pca_datapoints[visible_indices]
-                invisible_datapoints = pca_datapoints[invisible_indices]
+                visible_datapoints = datapoints[visible_indices]
+                invisible_datapoints = datapoints[invisible_indices]
 
                 # axes[i][0].set_aspect("equal")
 
@@ -556,8 +579,10 @@ class EmbeddingPCACorrespondence(Command):
 
                 axes[i][0].scatter(invisible_datapoints[:, 0], invisible_datapoints[:, 1], s=1.0, alpha=0.5)
 
-                axes[i][0].set_xlabel("PC1")
-                axes[i][0].set_ylabel("PC2")
+                if self._xlabel is not None:
+                    axes[i][0].set_xlabel(self._xlabel)
+                if self._ylabel is not None:
+                    axes[i][0].set_ylabel(self._ylabel)
                 axes[i][0].legend(["Visible", "Obstructed"])
 
                 axes[i][1].axis("off")
@@ -566,7 +591,7 @@ class EmbeddingPCACorrespondence(Command):
                 axes[i][1].imshow(image)
                 # axes[i][1].scatter(visible_positions[:, 0], visible_positions[:, 1], s=0.5)
 
-                random_indices: NDArray[np.signedinteger] = np.random.choice(
+                random_indices: NDArray[np.signedinteger] = lines_rng.choice(
                     np.arange(0, visible_positions.shape[0]),
                     size=min(self.num_lines, visible_positions.shape[0]),
                     replace=False,
@@ -631,13 +656,109 @@ class EmbeddingPCACorrespondence(Command):
 
             # fig.tight_layout()
 
-            save_figure(fig, self.output_dir / "pca_correspondence.png")
+            self._save_fig(fig)
+
+
+@dataclass
+class EmbeddingPCACorrespondence(EmbeddingCorrespondence):
+    def __post_init__(self):
+        self._xlabel = "PC1"
+        self._ylabel = "PC2"
+
+    def _create_datapoints(self, ctx: DebugContext) -> NDArray:
+        CONSOLE.log("Calculating PCA")
+
+        pca = PCA(n_components=2)
+
+        pca.fit(ctx.state.sample_embeddings)
+
+        return pca.transform(ctx.state.sample_embeddings)
+
+    def _get_title(self, ctx: DebugContext) -> Optional[str]:
+        return f"PCA of Sample Embeddings of 3D Model '{ctx.uid}'\nfrom Category '{ctx.category}'"
+
+    def _save_fig(self, fig: Figure) -> None:
+        save_figure(fig, self.output_dir / "pca_correspondence.png")
+
+
+@dataclass
+class EmbeddingUMAPCorrespondence(EmbeddingCorrespondence):
+    umap_seed: Optional[int] = 42
+
+    umap_metric: str = "cosine"
+
+    umap_n_neighbors: int = 15
+
+    umap_min_dist: float = 0.1
+
+    def _create_datapoints(self, ctx: DebugContext) -> NDArray:
+        CONSOLE.log("Calculating UMAP")
+
+        umap_seed = self.umap_seed
+        if umap_seed is None:
+            umap_seed = np.random.randint(0, 2**32 - 1)
+
+        mapper = umap.UMAP(
+            n_neighbors=self.umap_n_neighbors,
+            min_dist=self.umap_min_dist,
+            metric=self.umap_metric,
+            random_state=self.umap_seed,
+        )
+
+        mapper.fit(ctx.state.sample_embeddings)
+
+        return mapper.embedding_
+
+    def _get_title(self, ctx: DebugContext) -> Optional[str]:
+        return f"UMAP of Sample Embeddings of 3D Model '{ctx.uid}'\nfrom Category '{ctx.category}'"
+
+    def _save_fig(self, fig: Figure) -> None:
+        save_figure(fig, self.output_dir / "umap_correspondence.png")
+
+
+@dataclass
+class EmbeddingTSNECorrespondence(EmbeddingCorrespondence):
+    tsne_seed: Optional[int] = 42
+
+    tsne_metric: str = "cosine"
+
+    tsne_n_iter: int = 1000
+
+    tsne_perplexity: float = 30.0
+
+    def _create_datapoints(self, ctx: DebugContext) -> NDArray:
+        CONSOLE.log("Calculating t-SNE")
+
+        tsne_seed = self.tsne_seed
+        if tsne_seed is None:
+            tsne_seed = np.random.randint(0, 2**32 - 1)
+
+        tsne = TSNE(
+            random_state=self.tsne_seed,
+            metric=self.tsne_metric,
+            n_iter=self.tsne_n_iter,
+            perplexity=self.tsne_perplexity,
+        )
+
+        embedding = tsne.fit_transform(ctx.state.sample_embeddings)
+
+        print(embedding.shape)
+
+        return embedding
+
+    def _get_title(self, ctx: DebugContext) -> Optional[str]:
+        return f"t-SNE of Sample Embeddings of 3D Model '{ctx.uid}'\nfrom Category '{ctx.category}'"
+
+    def _save_fig(self, fig: Figure) -> None:
+        save_figure(fig, self.output_dir / "tsne_correspondence.png")
 
 
 commands = {
     "sample_text_embedding_similarity": SampleTextEmbeddingSimilarity(),
     "selected_view_embedding_similarity": SelectedViewEmbeddingSimilarity(),
     "pca_correspondence": EmbeddingPCACorrespondence(),
+    "umap_correspondence": EmbeddingUMAPCorrespondence(),
+    "tsne_correspondence": EmbeddingTSNECorrespondence(),
 }
 
 SubcommandTypeUnion = tyro.conf.SuppressFixed[

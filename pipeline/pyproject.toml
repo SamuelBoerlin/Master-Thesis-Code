@@ -11,6 +11,7 @@ dependencies=[
     "gitpython",
     "fake-bpy-module",
     "pyclustering==0.10.1.2",
+    "umap-learn",
 ]
 
 [tool.setuptools.packages.find]
