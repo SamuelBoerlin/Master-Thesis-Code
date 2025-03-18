@@ -4,6 +4,7 @@ import torch
 from sklearn.decomposition import PCA
 from torch import Tensor
 
+from rvs.evaluation.lvis import Category
 from rvs.utils.nerfstudio import transform_to_ns_field_space
 
 # TODO: This should probably be elsewhere
@@ -57,6 +58,9 @@ class Command:
     uid: Optional[Uid] = None
     """Object uid"""
 
+    category: Optional[Category] = None
+    """Object category"""
+
     output_dir: Path = tyro.MISSING
     """Output directory"""
 
@@ -94,6 +98,10 @@ class Command:
         config = replace(config, runtime=runtime)
         if self.uid is not None:
             config.lvis_uids = {self.uid}
+            config.lvis_uids_file = None
+        if self.category is not None:
+            config.lvis_categories = {self.category}
+            config.lvis_categories_file = None
         return config
 
     def _run(self, ctx: DebugContext) -> None:
@@ -318,7 +326,6 @@ class SelectedViewEmbeddingSimilarity(Command):
                     selected_views_indices.append(j)
 
             assert len(selected_views) == len(selected_views_indices)
-            assert len(selected_views) == len(similarities)
 
             blank_image = Image.fromarray(
                 np.zeros(

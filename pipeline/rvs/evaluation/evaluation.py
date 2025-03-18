@@ -742,7 +742,7 @@ class Evaluation:
 
         skip = False
 
-        if self.config.runtime.skip_finished:
+        if self._debug_hook is None and self.config.runtime.skip_finished:
             try:
                 index_file = run.parent.instance.get_index_file(run.file)
                 if index_file.exists():

@@ -71,6 +71,7 @@ class PipelineEvaluationInstance:
             io.input_dirs,
             file,
             run_stages,
+            print_config=debug_hook is None,
             save_config=debug_hook is None,
         )
 
@@ -219,6 +220,7 @@ class PipelineEvaluationInstance:
         file: Path,
         stages: Optional[List[PipelineStage]],
         derived_seed: bool = True,
+        print_config: bool = True,
         save_config: bool = True,
     ) -> Pipeline:
         pipeline: Pipeline = PipelineEvaluationInstance.configure_pipeline(
@@ -229,7 +231,9 @@ class PipelineEvaluationInstance:
 
         pipeline.init(input_dirs=input_dirs)
 
-        pipeline.config.print_to_terminal()
+        if print_config:
+            pipeline.config.print_to_terminal()
+
         if save_config:
             pipeline.config.save_config()
 
