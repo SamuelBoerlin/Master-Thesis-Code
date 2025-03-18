@@ -9,7 +9,7 @@ from torch import Tensor
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["PYGLET_HEADLESS"] = "1"
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -28,14 +28,15 @@ from matplotlib.figure import Figure
 from matplotlib.patches import ConnectionPatch
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
-from nerfstudio.data.datamanagers.base_datamanager import DataManager
+from nerfstudio.data.datamanagers.base_datamanager import DataManager, VanillaDataManager
+from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.fields.base_field import Field
 from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.typing import NDArray
 from PIL import Image, Image as im
 from sklearn.manifold import TSNE
 
-from rvs.evaluation.debug import DebugContext
+from rvs.evaluation.debug import DebugContext, Uid
 from rvs.evaluation.evaluation import Evaluation, EvaluationConfig
 from rvs.pipeline.embedding import DefaultEmbeddingTypes
 from rvs.pipeline.stage import PipelineStage
@@ -50,6 +51,9 @@ from rvs.utils.random import derive_rng
 class Command:
     config: Path = tyro.MISSING
     """Path to config file to resume"""
+
+    uid: Optional[Uid] = None
+    """Object uid"""
 
     output_dir: Path = tyro.MISSING
     """Output directory"""
@@ -79,13 +83,17 @@ class Command:
         eval.run()
 
     def __apply_config_overrides(self, config: EvaluationConfig) -> EvaluationConfig:
-        config.runtime.from_stage = PipelineStage.OUTPUT
-        config.runtime.to_stage = PipelineStage.OUTPUT
-        config.runtime.override_existing = False
-        config.runtime.results_only = False
-        config.runtime.partial_results = False
-        config.runtime.threads = 1
-        config.runtime.stage_by_stage = False
+        runtime = replace(config.runtime)
+        runtime.from_stage = PipelineStage.OUTPUT
+        runtime.to_stage = PipelineStage.OUTPUT
+        runtime.override_existing = False
+        runtime.results_only = False
+        runtime.partial_results = False
+        runtime.threads = 1
+        runtime.stage_by_stage = False
+        config = replace(config, runtime=runtime)
+        if self.uid is not None:
+            config.lvis_uids = {self.uid}
         return config
 
     def _run(self, ctx: DebugContext) -> None:
@@ -462,19 +470,24 @@ class SelectedViewEmbeddingSimilarity(Command):
 
 
 @dataclass
-class FieldDensity(Command):
+class FieldWeights(Command):
     views: List[int] = tyro.MISSING
 
     num_contractions: int = 3
     num_expansions: int = 3
 
-    contraction_factor: float = 0.85
-    expansion_factor: float = 1.0 / 0.85
+    contraction_factor: float = 0.95
+    expansion_factor: float = 1.0 / 0.95
 
     per_view_scale: bool = True
 
-    lower_scale_percentile: float = 5.0
-    upper_scale_percentile: float = 95.0
+    use_middle_scale: bool = False
+
+    lower_scale_percentile: float = 10.0
+    upper_scale_percentile: float = 90.0
+
+    jitter_samples: int = 100
+    jitter_scale: float = 0.01
 
     flat_color: Optional[List[float]] = field(default_factory=lambda: [0.4, 0.4, 0.4, 1.0])
 
@@ -488,30 +501,39 @@ class FieldDensity(Command):
             lerf_pipeline: LERFPipeline = ctx.state.pipeline.field.trainer.pipeline
             lerf_model: LERFModel = lerf_pipeline.model
 
+            datamanager: VanillaDataManager = lerf_pipeline.datamanager
+
             base_positions = ctx.state.sample_positions
 
             positions: Dict[int, NDArray] = dict()
-            densities: Dict[int, NDArray] = dict()
-
-            min_density: float = np.nan
-            max_density: float = np.nan
+            weights: Dict[int, NDArray] = dict()
 
             for i in reversed(list(range(self.num_contractions))):
                 contracted_positions = base_positions * (self.contraction_factor ** (i + 1))
                 positions[-(i + 1)] = contracted_positions
-                densities[-(i + 1)] = self.__sample_densities(lerf_model.field, lerf_model.device, contracted_positions)
+                weights[-(i + 1)] = self.__sample_weights(
+                    lerf_model.field, lerf_model.device, contracted_positions, datamanager.train_dataparser_outputs
+                )
 
             positions[0] = base_positions
-            densities[0] = self.__sample_densities(lerf_model.field, lerf_model.device, base_positions)
+            weights[0] = self.__sample_weights(
+                lerf_model.field, lerf_model.device, base_positions, datamanager.train_dataparser_outputs
+            )
 
             for i in range(self.num_expansions):
                 expanded_positions = base_positions * (self.expansion_factor ** (i + 1))
                 positions[i + 1] = expanded_positions
-                densities[i + 1] = self.__sample_densities(lerf_model.field, lerf_model.device, expanded_positions)
+                weights[i + 1] = self.__sample_weights(
+                    lerf_model.field, lerf_model.device, expanded_positions, datamanager.train_dataparser_outputs
+                )
 
-            all_densities = np.concatenate([ds for ds in densities.values()])
-            min_density = np.nanpercentile(all_densities, self.lower_scale_percentile)
-            max_density = np.nanpercentile(all_densities, self.upper_scale_percentile)
+            all_weights: NDArray
+            if self.use_middle_scale:
+                all_weights = weights[0]
+            else:
+                all_weights = np.concatenate([ds for ds in weights.values()])
+            min_weight = np.nanpercentile(all_weights, self.lower_scale_percentile)
+            max_weight = np.nanpercentile(all_weights, self.upper_scale_percentile)
 
             visible_indices: List[NDArray] = []
 
@@ -558,8 +580,8 @@ class FieldDensity(Command):
                 )
             )
 
-            local_min_densities: List[float] = []
-            local_max_densities: List[float] = []
+            local_min_weights: List[float] = []
+            local_max_weights: List[float] = []
 
             for i, view_idx in enumerate(self.views):
                 view: View = None
@@ -571,24 +593,28 @@ class FieldDensity(Command):
                 if view is None:
                     raise ValueError(f"View with index {view_idx} not found")
 
-                local_min_density = min_density
-                local_max_density = max_density
+                local_min_weight = min_weight
+                local_max_weight = max_weight
 
                 if self.per_view_scale:
-                    local_visible_densities = np.concatenate(
-                        [densities[j][visible_indices[i]] for j in positions.keys()]
-                    )
-                    local_min_density = np.nanpercentile(local_visible_densities, self.lower_scale_percentile)
-                    local_max_density = np.nanpercentile(local_visible_densities, self.upper_scale_percentile)
+                    if self.use_middle_scale:
+                        local_min_weight = np.nanpercentile(weights[0][visible_indices[i]], self.lower_scale_percentile)
+                        local_max_weight = np.nanpercentile(weights[0][visible_indices[i]], self.upper_scale_percentile)
+                    else:
+                        local_visible_weights = np.concatenate(
+                            [weights[j][visible_indices[i]] for j in positions.keys()]
+                        )
+                        local_min_weight = np.nanpercentile(local_visible_weights, self.lower_scale_percentile)
+                        local_max_weight = np.nanpercentile(local_visible_weights, self.upper_scale_percentile)
 
-                local_min_densities.append(local_min_density)
-                local_max_densities.append(local_max_density)
+                local_min_weights.append(local_min_weight)
+                local_max_weights.append(local_max_weight)
 
                 for j in sorted(list(positions.keys())):
                     visible_positions = positions[j][visible_indices[i], :]
-                    visible_densities = densities[j][visible_indices[i]]
+                    visible_weights = weights[j][visible_indices[i]]
 
-                    assert visible_positions.shape[0] == visible_densities.shape[0]
+                    assert visible_positions.shape[0] == visible_weights.shape[0]
 
                     sample_render: im.Image = None
 
@@ -596,11 +622,11 @@ class FieldDensity(Command):
                         nonlocal sample_render
                         sample_render = i.copy()
 
-                    sample_colors = np.zeros((visible_densities.shape[0], 3))
-                    for k in range(visible_densities.shape[0]):
+                    sample_colors = np.zeros((visible_weights.shape[0], 3))
+                    for k in range(visible_weights.shape[0]):
                         sample_colors[k] = cmap(
                             np.clip(
-                                (visible_densities[k] - local_min_density) / (local_max_density - local_min_density),
+                                (visible_weights[k] - local_min_weight) / (local_max_weight - local_min_weight),
                                 0.0,
                                 1.0,
                             )
@@ -664,24 +690,55 @@ class FieldDensity(Command):
 
             for i in range(len(self.views)):
                 cb_axes = axes[i][-1]
-                fig.colorbar(
+                cbar = fig.colorbar(
                     matplotlib.cm.ScalarMappable(
-                        matplotlib.colors.Normalize(vmin=local_min_densities[i], vmax=local_max_densities[i]), cmap=cmap
+                        matplotlib.colors.Normalize(vmin=local_min_weights[i], vmax=local_max_weights[i]), cmap=cmap
                     ),
                     cax=inset_axes(cb_axes, width="5%", height="100%", loc="center left"),
                     orientation="vertical",
-                    ticks=np.linspace(local_min_densities[i], local_max_densities[i], 8, endpoint=True),
+                    ticks=np.linspace(local_min_weights[i], local_max_weights[i], 8, endpoint=True),
                 )
+                cbar.ax.set_ylabel("$1 - e^{\sigma}$", rotation=-90, va="bottom")
 
             fig.set_facecolor((0, 0, 0, 0))
 
             fig.tight_layout()
 
-            save_figure(fig, self.output_dir / "field_densities.png")
+            save_figure(fig, self.output_dir / "field_weights.png")
 
-    def __sample_densities(self, field: Field, device: Any, positions: NDArray) -> NDArray:
+    def __sample_weights(
+        self, field: Field, device: Any, positions: NDArray, dataparser_outputs: DataparserOutputs
+    ) -> NDArray:
         with torch.no_grad():
-            return field.density_fn(torch.from_numpy(positions).to(device)).detach().squeeze().cpu().numpy()
+            base_positions = torch.from_numpy(positions.copy()).to(device, dtype=torch.float32)
+
+            base_positions = (
+                torch.cat(
+                    (
+                        base_positions,
+                        torch.ones_like(base_positions[..., :1]),
+                    ),
+                    -1,
+                )
+                @ dataparser_outputs.dataparser_transform.to(device, dtype=torch.float32).T
+            )
+
+            base_positions *= dataparser_outputs.dataparser_scale
+
+            def jitter_positions() -> Tensor:
+                random_offsets = (torch.rand(size=base_positions.shape, device=device) - 0.5) * 2.0
+                return base_positions + random_offsets * self.jitter_scale * dataparser_outputs.dataparser_scale
+
+            batched_positions = torch.stack([base_positions] + [jitter_positions() for _ in range(self.jitter_samples)])
+
+            batched_densities = field.density_fn(batched_positions).detach()
+
+            batched_weights = 1.0 - torch.exp(-batched_densities)
+            batched_weights = torch.nan_to_num(batched_weights)
+
+            avg_weights = batched_weights.mean(dim=0, keepdim=False)
+
+            return avg_weights.squeeze().cpu().numpy()
 
 
 @dataclass
@@ -966,8 +1023,6 @@ class EmbeddingTSNECorrespondence(EmbeddingCorrespondence):
 
         embedding = tsne.fit_transform(ctx.state.sample_embeddings)
 
-        print(embedding.shape)
-
         return embedding
 
     def _get_title(self, ctx: DebugContext) -> Optional[str]:
@@ -983,7 +1038,7 @@ commands = {
     "pca_correspondence": EmbeddingPCACorrespondence(),
     "umap_correspondence": EmbeddingUMAPCorrespondence(),
     "tsne_correspondence": EmbeddingTSNECorrespondence(),
-    "field_density": FieldDensity(),
+    "field_weights": FieldWeights(),
 }
 
 SubcommandTypeUnion = tyro.conf.SuppressFixed[
