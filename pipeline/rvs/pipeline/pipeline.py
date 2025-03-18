@@ -357,7 +357,7 @@ class Pipeline:
             self.field.init(
                 pipeline_state,
                 transforms_path,
-                self.__io.get_input_path(self.__field_output_dir, condition=has_checkpoint),
+                self.__io.get_path(PipelineStage.TRAIN_FIELD, self.__field_output_dir, condition=has_checkpoint),
                 load_from_checkpoint=True,
                 **self.kwargs,
             )
@@ -695,7 +695,7 @@ class Pipeline:
         return path
 
     def __load_model_normalization(self, state: "PipelineState") -> Path:
-        path = self.__io.get_input_path(self.__renderer_output_dir / "normalization.json")
+        path = self.__io.get_path(PipelineStage.RENDER_VIEWS, self.__renderer_output_dir / "normalization.json")
         try:
             with path.open("r") as f:
                 obj = json.load(f)
@@ -717,7 +717,7 @@ class Pipeline:
         return path
 
     def __load_sample_positions(self, state: "PipelineState") -> Path:
-        path = self.__io.get_input_path(self.__sampler_output_dir / "positions.json")
+        path = self.__io.get_path(PipelineStage.SAMPLE_POSITIONS, self.__sampler_output_dir / "positions.json")
         try:
             with path.open("r") as f:
                 state.sample_positions = np.array(json.load(f))
@@ -743,7 +743,7 @@ class Pipeline:
         return path
 
     def __load_sample_embeddings(self, state: "PipelineState") -> Path:
-        path = self.__io.get_input_path(self.__embedding_output_dir / "embeddings.json")
+        path = self.__io.get_path(PipelineStage.SAMPLE_EMBEDDINGS, self.__embedding_output_dir / "embeddings.json")
         try:
             with path.open("r") as f:
                 obj = json.load(f)
@@ -782,7 +782,7 @@ class Pipeline:
     def __load_embeddings_transform(self, state: "PipelineState") -> Path:
         self.__load_transformed_embeddings(state)
 
-        path = self.__io.get_input_path(self.__transform_output_dir / "transform.json")
+        path = self.__io.get_path(PipelineStage.TRANSFORM_EMBEDDINGS, self.__transform_output_dir / "transform.json")
         try:
             with path.open("r") as f:
                 obj: Dict[str, Dict[str, Dict[str, Any]]] = json.load(f)
@@ -815,7 +815,7 @@ class Pipeline:
         return path
 
     def __load_transformed_embeddings(self, state: "PipelineState") -> Path:
-        path = self.__io.get_input_path(self.__transform_output_dir / "embeddings.json")
+        path = self.__io.get_path(PipelineStage.TRANSFORM_EMBEDDINGS, self.__transform_output_dir / "embeddings.json")
         try:
             with path.open("r") as f:
                 obj = json.load(f)
@@ -848,7 +848,7 @@ class Pipeline:
         return path
 
     def __load_clusters(self, state: "PipelineState") -> Path:
-        path = self.__io.get_input_path(self.__clustering_output_dir / "clusters.json")
+        path = self.__io.get_path(PipelineStage.CLUSTER_EMBEDDINGS, self.__clustering_output_dir / "clusters.json")
         try:
             with path.open("r") as f:
                 json_obj = json.load(f)
@@ -891,7 +891,7 @@ class Pipeline:
         return path
 
     def __load_selected_views(self, state: "PipelineState") -> Path:
-        path = self.__io.get_input_path(self.__selection_output_dir / "views.json")
+        path = self.__io.get_path(PipelineStage.SELECT_VIEWS, self.__selection_output_dir / "views.json")
         try:
             state.selected_views = []
             with path.open("r") as f:

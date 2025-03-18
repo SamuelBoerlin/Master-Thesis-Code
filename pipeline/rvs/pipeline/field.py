@@ -5,7 +5,9 @@ from typing import Optional, Type
 import numpy as np
 import torch
 from lerf.lerf import LERFModel
+from lerf.lerf_pipeline import LERFPipeline
 from nerfstudio.configs.base_config import InstantiateConfig
+from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 from nerfstudio.engine.trainer import Trainer, TrainerConfig
 from nerfstudio.models.base_model import ModelConfig
 from numpy.typing import NDArray
@@ -23,6 +25,7 @@ from rvs.pipeline.model import WrapperModelConfig
 from rvs.pipeline.state import PipelineState
 from rvs.pipeline.training_controller import TrainingController, TrainingControllerConfig
 from rvs.pipeline.training_tracker import LocalWriterShimConfig, TrainingTrackerConfig
+from rvs.utils.nerfstudio import transform_to_ns_field_space
 
 
 @dataclass
@@ -150,11 +153,12 @@ class Field:
 
     def sample(self, config: EmbeddingConfig, positions: NDArray, pipeline_state: PipelineState) -> NDArray:
         if config.type == DefaultEmbeddingTypes.CLIP:
-            # TODO: Proper typing
-            lerf_model: LERFModel = self.trainer.pipeline.model
+            assert isinstance(self.trainer.pipeline, LERFPipeline)
+            lerf_pipeline: LERFPipeline = self.trainer.pipeline
+            lerf_model: LERFModel = lerf_pipeline.model
 
             # Convert positions np array to tensor
-            positions: Tensor = self.__transform_positions(lerf_model, positions)
+            positions: Tensor = self.__transform_positions(lerf_pipeline, positions)
 
             # Sample hashgrid values
             x = self.__sample_hashgrid_values(lerf_model, positions)
@@ -194,11 +198,12 @@ class Field:
             if not isinstance(config, DinoEmbeddingConfig):
                 raise ValueError(f"Unknown DINO config type {str(config)}")
 
-            # TODO: Proper typing
-            lerf_model: LERFModel = self.trainer.pipeline.model
+            assert isinstance(self.trainer.pipeline, LERFPipeline)
+            lerf_pipeline: LERFPipeline = self.trainer.pipeline
+            lerf_model: LERFModel = lerf_pipeline.model
 
             # Convert positions np array to tensor
-            positions: Tensor = self.__transform_positions(lerf_model, positions)
+            positions: Tensor = self.__transform_positions(lerf_pipeline, positions)
 
             # Sample hashgrid values
             x = self.__sample_hashgrid_values(lerf_model, positions)
@@ -214,11 +219,17 @@ class Field:
         else:
             raise ValueError(f"Unknown embedding config type {str(config)}")
 
-    def __transform_positions(self, lerf_model: LERFModel, positions: NDArray) -> Tensor:
+    def __transform_positions(self, lerf_pipeline: LERFPipeline, positions: NDArray) -> Tensor:
+        lerf_model: LERFModel = lerf_pipeline.model
+        datamanager: VanillaDataManager = lerf_pipeline.datamanager
+
         # Convert positions np array to tensor
         positions: Tensor = torch.from_numpy(positions.copy()).to(lerf_model.device).reshape((1, -1, 3))
 
-        # Transform
+        # Transform to NS field space
+        positions = transform_to_ns_field_space(positions, datamanager.train_dataparser_outputs)
+
+        # Transform to LERF field space
         positions = lerf_model.lerf_field.spatial_distortion(positions)
         positions = (positions + 2.0) / 4.0
 

@@ -399,11 +399,6 @@ class Evaluation:
                 )
                 return False
 
-        if self._debug_hook is not None:
-            assert self.config.runtime.from_stage == PipelineStage.OUTPUT
-            assert self.config.runtime.to_stage == PipelineStage.OUTPUT
-            is_read_only = False  # Debug won't change anything, but need this to be false to run the pipeline
-
         CONSOLE.log("Starting runs...")
         progress_log_file_name = "progress.log" if self._debug_hook is None else "progress_debug.log"
         with create_logger(
@@ -429,7 +424,9 @@ class Evaluation:
             aborted = False
 
             if not self.config.runtime.results_only:
-                assert not is_read_only
+                if self._debug_hook is None:  # Debug won't change anything
+                    assert not is_read_only
+
                 if self.config.runtime.stage_by_stage:
                     aborted = not self.__run_stage_by_stage(run)
                 else:

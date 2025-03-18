@@ -4,7 +4,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
+import torch
+from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from PIL import Image as im
+from torch import Tensor
 
 from rvs.pipeline.views import View
 
@@ -199,3 +202,20 @@ class ThreadedImageSaver:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
+
+
+def transform_to_ns_field_space(positions: Tensor, dataparser_outputs: DataparserOutputs) -> Tensor:
+    positions = (
+        torch.cat(
+            (
+                positions,
+                torch.ones_like(positions[..., :1]),
+            ),
+            -1,
+        )
+        @ dataparser_outputs.dataparser_transform.to(positions).T
+    )
+
+    positions *= dataparser_outputs.dataparser_scale
+
+    return positions

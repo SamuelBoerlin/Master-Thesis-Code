@@ -4,6 +4,8 @@ import torch
 from sklearn.decomposition import PCA
 from torch import Tensor
 
+from rvs.utils.nerfstudio import transform_to_ns_field_space
+
 # TODO: This should probably be elsewhere
 # Required for headless rendering with pyrenderer and trimesh
 os.environ["PYOPENGL_PLATFORM"] = "egl"
@@ -84,8 +86,6 @@ class Command:
 
     def __apply_config_overrides(self, config: EvaluationConfig) -> EvaluationConfig:
         runtime = replace(config.runtime)
-        runtime.from_stage = PipelineStage.OUTPUT
-        runtime.to_stage = PipelineStage.OUTPUT
         runtime.override_existing = False
         runtime.results_only = False
         runtime.partial_results = False
@@ -712,18 +712,7 @@ class FieldWeights(Command):
         with torch.no_grad():
             base_positions = torch.from_numpy(positions.copy()).to(device, dtype=torch.float32)
 
-            base_positions = (
-                torch.cat(
-                    (
-                        base_positions,
-                        torch.ones_like(base_positions[..., :1]),
-                    ),
-                    -1,
-                )
-                @ dataparser_outputs.dataparser_transform.to(device, dtype=torch.float32).T
-            )
-
-            base_positions *= dataparser_outputs.dataparser_scale
+            base_positions = transform_to_ns_field_space(base_positions, dataparser_outputs)
 
             def jitter_positions() -> Tensor:
                 random_offsets = (torch.rand(size=base_positions.shape, device=device) - 0.5) * 2.0
@@ -752,6 +741,8 @@ class EmbeddingCorrespondence(Command):
     flat_color: Optional[List[float]] = None  # field(default_factory=lambda: [0.4, 0.4, 0.4, 1.0])
 
     render_sample_positions: bool = False
+
+    flip_y: bool = False
 
     _xlabel: Optional[str] = "D1"
     _ylabel: Optional[str] = "D2"
@@ -865,6 +856,9 @@ class EmbeddingCorrespondence(Command):
                 if self._ylabel is not None:
                     axes[i][0].set_ylabel(self._ylabel)
                 axes[i][0].legend(["Visible", "Obstructed"])
+
+                if self.flip_y:
+                    axes[i][0].set_ylim(axes[i][0].get_ylim()[::-1])
 
                 axes[i][1].axis("off")
                 axes[i][1].set_aspect("equal")

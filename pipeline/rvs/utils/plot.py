@@ -285,14 +285,20 @@ def image_grid_plot(
     if len(images) == 0:
         return
 
+    auto_cols = False
+
     if columns is None:
         columns = int(np.ceil(np.sqrt(len(images))))
+        auto_cols = True
 
     assert columns > 0
 
     rows = int(np.ceil(len(images) * 1.0 / columns))
 
-    assert rows > 0 and rows <= columns
+    assert rows > 0
+
+    if auto_cols:
+        assert rows <= columns
 
     if row_labels is not None and len(row_labels) != rows:
         raise ValueError("len(row_labels) != rows")

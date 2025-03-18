@@ -59,6 +59,7 @@ class PipelineEvaluationInstance:
         file: Path,
         stages_filter: Optional[Set[PipelineStage]] = None,
         debug_hook: Optional[Callable[[PipelineStage, PipelineState], None]] = None,
+        clear_memory: bool = True,
     ) -> None:
         io = self.create_pipeline_io(file)
 
@@ -70,6 +71,7 @@ class PipelineEvaluationInstance:
             io.input_dirs,
             file,
             run_stages,
+            save_config=debug_hook is None,
         )
 
         assert pipeline.config.stages == run_stages
@@ -80,15 +82,17 @@ class PipelineEvaluationInstance:
 
         results = pipeline.run(debug_hook=debug_hook)
 
-        index_file = PipelineEvaluationInstance.save_results(results, self.results_dir, file)
-        if index_file is not None:
-            assert index_file == self.get_index_file(file)
-            assert index_file.parent == self.get_results_dir(file)
+        if debug_hook is None:
+            index_file = PipelineEvaluationInstance.save_results(results, self.results_dir, file)
+            if index_file is not None:
+                assert index_file == self.get_index_file(file)
+                assert index_file.parent == self.get_results_dir(file)
 
-        # Clear memory for next run
-        del pipeline
-        gc.collect()
-        torch.cuda.empty_cache()
+        if clear_memory:
+            # Clear memory for next run
+            del pipeline
+            gc.collect()
+            torch.cuda.empty_cache()
 
     @staticmethod
     def save_results(results: PipelineState, output_dir: Path, file: Path) -> Optional[Path]:
@@ -215,6 +219,7 @@ class PipelineEvaluationInstance:
         file: Path,
         stages: Optional[List[PipelineStage]],
         derived_seed: bool = True,
+        save_config: bool = True,
     ) -> Pipeline:
         pipeline: Pipeline = PipelineEvaluationInstance.configure_pipeline(
             config, output_dir, file, stages, derived_seed=derived_seed
@@ -225,7 +230,8 @@ class PipelineEvaluationInstance:
         pipeline.init(input_dirs=input_dirs)
 
         pipeline.config.print_to_terminal()
-        pipeline.config.save_config()
+        if save_config:
+            pipeline.config.save_config()
 
         return pipeline
 
