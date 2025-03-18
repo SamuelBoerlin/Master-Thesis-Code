@@ -28,7 +28,7 @@ from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.cm import get_cmap
 from matplotlib.figure import Figure
-from matplotlib.patches import ConnectionPatch
+from matplotlib.patches import Circle, ConnectionPatch
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
 from nerfstudio.data.datamanagers.base_datamanager import DataManager, VanillaDataManager
@@ -751,6 +751,10 @@ class EmbeddingCorrespondence(Command):
 
     flip_y: bool = False
 
+    circle_x: Optional[float] = None
+    circle_y: Optional[float] = None
+    circle_radius: Optional[float] = None
+
     _xlabel: Optional[str] = "D1"
     _ylabel: Optional[str] = "D2"
 
@@ -766,6 +770,13 @@ class EmbeddingCorrespondence(Command):
     def _run(self, ctx: DebugContext) -> None:
         if ctx.stage == PipelineStage.SAMPLE_EMBEDDINGS:
             flat_model_color = np.array(self.flat_color) if self.flat_color is not None else None
+
+            if not (
+                (self.circle_x is None) == (self.circle_y is None)
+                and (self.circle_y is None) == (self.circle_radius is None)
+                and (self.circle_radius is None) == (self.circle_x is None)
+            ):
+                raise ValueError("circle_x, circle_y and circle_radius must be used together")
 
             datapoints = self._create_datapoints(ctx)
 
@@ -873,9 +884,34 @@ class EmbeddingCorrespondence(Command):
                 axes[i][1].imshow(image)
                 # axes[i][1].scatter(visible_positions[:, 0], visible_positions[:, 1], s=0.5)
 
+                available_indices: NDArray
+                if self.circle_radius is None:
+                    available_indices = np.arange(0, visible_positions.shape[0])
+                else:
+                    assert self.circle_x is not None
+
+                    assert self.circle_y is not None
+                    center = np.array([self.circle_x, self.circle_y])
+
+                    distances = np.linalg.norm(visible_datapoints - center, axis=1)
+
+                    inside: NDArray = distances <= self.circle_radius
+
+                    available_indices = inside.nonzero()[0]
+
+                    axes[i][0].add_patch(
+                        Circle(
+                            (self.circle_x, self.circle_y),
+                            self.circle_radius,
+                            facecolor="None",
+                            edgecolor="black",
+                            linestyle="--",
+                        )
+                    )
+
                 random_indices: NDArray[np.signedinteger] = lines_rng.choice(
-                    np.arange(0, visible_positions.shape[0]),
-                    size=min(self.num_lines, visible_positions.shape[0]),
+                    available_indices,
+                    size=min(self.num_lines, available_indices.shape[0]),
                     replace=False,
                 )
 
