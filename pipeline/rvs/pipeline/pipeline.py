@@ -462,7 +462,7 @@ class Pipeline:
 
             for i, embedding_config in enumerate(self.config.embeddings):
                 parameters = self.transform.create(
-                    pipeline_state.sample_embeddings_dict[embedding_config.type], pipeline_state
+                    pipeline_state.sample_embeddings_dict[embedding_config.type], embedding_config.type, pipeline_state
                 )
                 pipeline_state.transform_parameters_dict[embedding_config.type] = {
                     key: value.copy() for key, value in parameters.items()

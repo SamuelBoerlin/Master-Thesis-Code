@@ -25,7 +25,7 @@ class Transform:
     def __init__(self, config: TransformConfig) -> None:
         self.config = config
 
-    def create(self, samples: NDArray, pipeline_state: PipelineState) -> Dict[str, NDArray]:
+    def create(self, samples: NDArray, sample_type: str, pipeline_state: PipelineState) -> Dict[str, NDArray]:
         pass
 
     def apply(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray:
@@ -41,7 +41,7 @@ class IdentityTransformConfig(TransformConfig):
 
 
 class IdentityTransform(Transform):
-    def create(self, samples: NDArray, pipeline_state: PipelineState) -> Dict[str, NDArray]:
+    def create(self, samples: NDArray, sample_type: str, pipeline_state: PipelineState) -> Dict[str, NDArray]:
         return {"dim": np.array([samples.shape[1]])}
 
     def apply(self, samples: NDArray, parameters: Dict[str, NDArray]) -> NDArray:
@@ -73,7 +73,7 @@ class SKLearnPCATransform(Transform):
     def _setup_pca(self) -> PCA:
         pass
 
-    def create(self, samples: NDArray, pipeline_state: PipelineState) -> Dict[str, NDArray]:
+    def create(self, samples: NDArray, sample_type: str, pipeline_state: PipelineState) -> Dict[str, NDArray]:
         pca = self._setup_pca()
 
         pca.fit(samples)
@@ -81,7 +81,7 @@ class SKLearnPCATransform(Transform):
         if pipeline_state.scratch_output_dir is not None:
             explained_variance = np.cumsum(pca.explained_variance_ratio_)
 
-            variance_json_file = pipeline_state.scratch_output_dir / "variance.json"
+            variance_json_file = pipeline_state.scratch_output_dir / f"{sample_type.lower()}_variance.json"
             with variance_json_file.open("w") as f:
                 json.dump(explained_variance.tolist(), f)
 
@@ -99,7 +99,7 @@ class SKLearnPCATransform(Transform):
 
             ax.set_ylabel("Cumulative Explained Variance Ratio")
 
-            save_figure(fig, pipeline_state.scratch_output_dir / "variance.png")
+            save_figure(fig, pipeline_state.scratch_output_dir / f"{sample_type.lower()}_variance.png")
 
         return {"mean": pca.mean_, "components": pca.components_}
 
