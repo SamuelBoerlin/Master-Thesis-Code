@@ -188,9 +188,10 @@ def embed_random_views(
     instance: PipelineEvaluationInstance,
     rng: Generator,
     number_of_views_distribution: Callable[[Generator], int],
-) -> Dict[Uid, NDArray]:
-    avg_embeddings = dict()
+) -> Tuple[Dict[Uid, NDArray], Dict[Uid, List[NDArray]], Dict[Uid, List[int]]]:
+    avg_embeddings: Dict[Uid, NDArray] = dict()
     all_embeddings: Dict[Uid, List[NDArray]] = dict()
+    view_indices: Dict[Uid, List[int]] = dict()
 
     base_seed = random_seed_bytes(rng)
 
@@ -209,19 +210,35 @@ def embed_random_views(
         if transforms_file.exists() and transforms_file.is_file():
             _, views, _, _, _, _ = load_transforms_json(transforms_file.parent, set_view_path=True)
 
-            available_image_files = [view.path for view in views if view.path.exists() and view.path.is_file()]
-            random_image_files = []
+            available_views = [
+                view for view in views if view.path is not None and view.path.exists() and view.path.is_file()
+            ]
 
-            for i in range(min(len(available_image_files), number_of_views)):
-                idx = selection_rng.integers(low=0, high=len(available_image_files))
-                random_image_files.append(available_image_files[idx])
-                del available_image_files[idx]
+            random_view_indices: List[int] = []
+            random_image_files: List[Path] = []
+
+            for i in range(min(len(available_views), number_of_views)):
+                idx = selection_rng.integers(low=0, high=len(available_views))
+                random_view = available_views[idx]
+
+                assert random_view.path is not None
+                assert random_view.path.exists()
+                assert random_view.path.is_file()
+
+                random_view_indices.append(random_view.index)
+                random_image_files.append(random_view.path)
+
+                del available_views[idx]
+
+            assert len(random_view_indices) == len(random_image_files)
 
             if len(random_image_files) != number_of_views:
                 CONSOLE.log(
                     f"[bold yellow]WARNING: Only {len(random_image_files)} views available of {file_link(model_file)} for random selection of {number_of_views} views"
                 )
                 continue
+
+            view_indices[uid] = random_view_indices
 
             avg_embedding = None
             avg_embedding_count = 0
@@ -253,7 +270,7 @@ def embed_random_views(
 
                 # CONSOLE.log(f"Embedded random views of {file_link(model_file)}")
 
-    return avg_embeddings, all_embeddings
+    return avg_embeddings, all_embeddings, view_indices
 
 
 def embed_best_views(
@@ -262,8 +279,9 @@ def embed_best_views(
     embedder: CachedEmbedder,
     instance: PipelineEvaluationInstance,
     categories_embeddings: Dict[Category, NDArray],
-) -> Dict[Uid, NDArray]:
+) -> Tuple[Dict[Uid, NDArray], Dict[Uid, int]]:
     embeddings: Dict[Uid, NDArray] = dict()
+    view_indices: Dict[Uid, int] = dict()
 
     for uid in tqdm(sorted(uids)):
         model_file = Path(lvis.uid_to_file[uid])
@@ -282,13 +300,22 @@ def embed_best_views(
 
             best_embedding: Optional[NDArray] = None
             best_embedding_similarity: Optional[float] = None
+            best_view_index: Optional[int] = None
 
             if transforms_file.exists() and transforms_file.is_file():
                 _, views, _, _, _, _ = load_transforms_json(transforms_file.parent, set_view_path=True)
 
-                available_image_files = [view.path for view in views if view.path.exists() and view.path.is_file()]
+                available_views = [
+                    view for view in views if view.path is not None and view.path.exists() and view.path.is_file()
+                ]
 
-                for image_file in available_image_files:
+                for view in available_views:
+                    assert view.path is not None
+                    assert view.path.exists()
+                    assert view.path.is_file()
+
+                    image_file = view.path
+
                     # CONSOLE.log(f"Embedding view {file_link(image_file)}")
 
                     embedding = embedder.embed_image_numpy(
@@ -304,13 +331,17 @@ def embed_best_views(
                     ):
                         best_embedding = embedding
                         best_embedding_similarity = similarity
+                        best_view_index = view.index
 
             if best_embedding is not None:
                 embeddings[uid] = best_embedding
 
-                # CONSOLE.log(f"Embedded all views of {file_link(model_file)}")
+            if best_view_index is not None:
+                view_indices[uid] = best_view_index
 
-    return embeddings
+            # CONSOLE.log(f"Embedded all views of {file_link(model_file)}")
+
+    return embeddings, view_indices
 
 
 def plot_selected_views_samples(

@@ -136,20 +136,23 @@ def evaluate_results(
     available_uids = avg_selected_views_embeddings.keys()
 
     CONSOLE.rule("Embedding equivalent distribution of random views...")
-    avg_equiv_random_views_embeddings, all_equiv_random_views_embeddings = embed_random_views(
-        lvis,
-        available_uids,
-        embedder,
-        instance,
-        np.random.default_rng(seed=seed),
-        discrete_distribution(np.arange(avg_histogram_of_views.shape[0]), avg_histogram_of_views),
+    avg_equiv_random_views_embeddings, all_equiv_random_views_embeddings, all_equiv_random_views_indices = (
+        embed_random_views(
+            lvis,
+            available_uids,
+            embedder,
+            instance,
+            np.random.default_rng(seed=seed),
+            discrete_distribution(np.arange(avg_histogram_of_views.shape[0]), avg_histogram_of_views),
+        )
     )
     dump_result(avg_equiv_random_views_embeddings, dumps_dir / "avg_equiv_random_views_embeddings.pkl")
     dump_result(all_equiv_random_views_embeddings, dumps_dir / "all_equiv_random_views_embeddings.pkl")
+    dump_result(all_equiv_random_views_indices, dumps_dir / "all_equiv_random_views_indices.pkl")
     available_uids = avg_equiv_random_views_embeddings.keys()
 
     CONSOLE.rule("Embedding best views w.r.t. ground truth...")
-    best_views_embeddings = embed_best_views(
+    best_views_embeddings, best_views_indices = embed_best_views(
         lvis,
         available_uids,
         embedder,
@@ -157,6 +160,7 @@ def evaluate_results(
         categories_embeddings,
     )
     dump_result(best_views_embeddings, dumps_dir / "best_views_embeddings.pkl")
+    dump_result(best_views_indices, dumps_dir / "best_views_indices.pkl")
     available_uids = best_views_embeddings.keys()
 
     CONSOLE.rule("Calculate number of clusters...")
