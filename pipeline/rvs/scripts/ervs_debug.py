@@ -4,7 +4,9 @@ import torch
 from sklearn.decomposition import PCA
 from torch import Tensor
 
+from rvs.evaluation.evaluation_method import load_result
 from rvs.evaluation.lvis import Category
+from rvs.utils.cache import get_evaluation_prompt_embedding_cache_key, get_pipeline_render_embedding_cache_key
 from rvs.utils.nerfstudio import transform_to_ns_field_space
 
 # TODO: This should probably be elsewhere
@@ -28,7 +30,8 @@ from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.cm import get_cmap
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle, ConnectionPatch
+from matplotlib.patches import Circle, ConnectionPatch, Patch, Rectangle
+from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
 from nerfstudio.data.datamanagers.base_datamanager import DataManager, VanillaDataManager
@@ -46,7 +49,7 @@ from rvs.pipeline.stage import PipelineStage
 from rvs.pipeline.views import View
 from rvs.utils.config import find_config_working_dir, load_config
 from rvs.utils.debug import render_sample, render_sample_positions, render_sample_positions_and_colors
-from rvs.utils.plot import fit_suptitle, image_grid_plot, save_figure
+from rvs.utils.plot import fit_suptitle, image_grid_plot, place_legend_outside, save_figure
 from rvs.utils.random import derive_rng
 
 
@@ -95,7 +98,10 @@ class Command:
         runtime.partial_results = False
         runtime.threads = 1
         runtime.stage_by_stage = False
+        runtime.skip_embedder = False
         config = replace(config, runtime=runtime)
+        config.embedder_image_cache_required = False
+        config.embedder_text_cache_required = False
         if self.uid is not None:
             config.lvis_uids = {self.uid}
             config.lvis_uids_file = None
@@ -256,6 +262,245 @@ class SampleTextEmbeddingSimilarity(Command):
             fig.tight_layout()
 
             save_figure(fig, self.output_dir / "sample_text_embedding_similarity.png")
+
+
+@dataclass
+class ViewTextEmbeddingSimilarity(Command):
+    prompt: str = tyro.MISSING
+
+    highlight_selected_views: bool = True
+
+    highlight_random_views: bool = True
+
+    show_only_highlighted_views: bool = False
+
+    relative_similarity_bar: bool = True
+
+    sort_by_similarity: bool = True
+
+    def _run(self, ctx: DebugContext) -> None:
+        if ctx.stage == PipelineStage.OUTPUT:
+            CONSOLE.log(f"Embedding prompt={self.prompt}")
+
+            prompt_embedding = ctx.eval.embedder.embed_text_numpy(
+                self.prompt, get_evaluation_prompt_embedding_cache_key(self.prompt)
+            )
+
+            CONSOLE.log("Loading view indices")
+
+            selected_view_indices: Optional[List[int]] = None
+            if self.highlight_selected_views:
+                selected_view_indices = [view.index for view in ctx.state.selected_views]
+
+            random_view_indices: Optional[List[int]] = None
+            if self.highlight_random_views:
+                all_random_view_indices: Dict[Uid, List[int]] = load_result(
+                    ctx.eval.results_dir / "dumps" / "all_equiv_random_views_indices.pkl"
+                )
+                if ctx.uid in all_random_view_indices:
+                    random_view_indices = all_random_view_indices[ctx.uid]
+
+            num_cols = None
+
+            view_indices_list: List[List[int]] = None
+
+            if (
+                self.show_only_highlighted_views
+                and selected_view_indices is not None
+                and random_view_indices is not None
+            ):
+                if len(selected_view_indices) >= len(random_view_indices):
+                    view_indices_list = [selected_view_indices, random_view_indices]
+
+                    if not self.sort_by_similarity:
+                        num_cols = len(selected_view_indices)
+                else:
+                    view_indices_list = [random_view_indices, selected_view_indices]
+
+                    if not self.sort_by_similarity:
+                        num_cols = len(random_view_indices)
+            else:
+                view_indices_list = [[view.index for view in ctx.state.training_views]]
+
+            assert view_indices_list is not None
+
+            images: List[im.Image] = []
+            images_files: List[Path] = []
+            images_indices: List[int] = []
+            images_embeddings: List[NDArray] = []
+            images_similarity: List[float] = []
+            min_similarity = 1.0
+            max_similarity = -1.0
+
+            for view_indices in view_indices_list:
+                for view_idx in view_indices:
+                    if view_idx not in images_indices:
+                        CONSOLE.log(f"Loading view={view_idx}")
+
+                        view: View = None
+
+                        for v in ctx.state.training_views:
+                            if v.index == view_idx:
+                                view = v
+
+                        if view is None:
+                            raise ValueError(f"View with index {view_idx} not found")
+
+                        file = view.resolve_path(ctx.state.pipeline.io)
+                        images.append(im.open(file))
+                        images_files.append(file)
+                        images_indices.append(view_idx)
+
+                        CONSOLE.log(f"Embedding view={view_idx}")
+
+                        image_embedding = ctx.eval.embedder.embed_image_numpy(
+                            file, get_pipeline_render_embedding_cache_key(ctx.state.pipeline.config.model_file, file)
+                        )
+
+                        images_embeddings.append(image_embedding)
+
+                        similarity = np.dot(image_embedding, prompt_embedding)
+                        min_similarity = min(min_similarity, similarity)
+                        max_similarity = max(max_similarity, similarity)
+                        images_similarity.append(similarity)
+
+            if self.sort_by_similarity:
+                num_cols = None
+
+                sort_indices: List[int] = np.argsort(-np.array(images_similarity)).tolist()
+
+                def sort(lst: List) -> List:
+                    return [lst[i] for i in sort_indices]
+
+                images = sort(images)
+                images_files = sort(images_files)
+                images_indices = sort(images_indices)
+                images_embeddings = sort(images_embeddings)
+                images_similarity = sort(images_similarity)
+
+            CONSOLE.log("Creating plot")
+
+            fig = plt.figure()
+
+            axes = image_grid_plot(
+                fig,
+                images,
+                columns=num_cols,
+                label_face_alpha=0.5,
+                border_color="black",
+                border_alpha=0.5,
+            )
+
+            i = 0
+            for r in range(len(axes)):
+                for c in range(len(axes[0])):
+                    if i >= len(images_indices):
+                        break
+
+                    ax = axes[r][c]
+
+                    view_idx = images_indices[i]
+
+                    similarity = images_similarity[i]
+
+                    ax.annotate(
+                        "{0:.2f}".format(similarity),
+                        (0.925, 0.075),
+                        horizontalalignment="right",
+                        verticalalignment="bottom",
+                        xycoords="axes fraction",
+                        fontsize=24.0,
+                        fontweight="bold",
+                        bbox={
+                            "facecolor": fig.get_facecolor(),
+                            "alpha": 0.5,
+                            "boxstyle": "square",
+                            "edgecolor": "none",
+                            "linewidth": 0,
+                        },
+                    )
+
+                    # bar_ax: Axes = inset_axes(ax, width="5%", height="97%", loc="center left")
+                    bar_ax: Axes = make_axes_locatable(ax).append_axes("left", size="5%", pad="2%")
+
+                    bar_height: float
+                    if self.relative_similarity_bar:
+                        bar_height = 2.0 * (similarity - min_similarity) / (max_similarity - min_similarity)
+                    else:
+                        bar_height = 1.0 + similarity
+
+                    bar_ax.bar([0], [bar_height], bottom=-1.0)
+                    bar_ax.set_ylim(bottom=-1.0, top=1.0)
+                    bar_ax.axis("off")
+
+                    is_selected_view = view_idx in selected_view_indices if selected_view_indices is not None else False
+                    is_random_view = view_idx in random_view_indices if random_view_indices is not None else False
+
+                    if is_random_view:
+                        ax.add_patch(
+                            Rectangle(
+                                (0.0, 0.0),
+                                1.0,
+                                1.0,
+                                transform=ax.transAxes,
+                                linewidth=40 if is_selected_view else 20,
+                                edgecolor="C1",
+                                facecolor="none",
+                                alpha=1.0,
+                                zorder=-2,
+                            )
+                        )
+
+                    if is_selected_view:
+                        ax.add_patch(
+                            Rectangle(
+                                (0.0, 0.0),
+                                1.0,
+                                1.0,
+                                transform=ax.transAxes,
+                                linewidth=20,
+                                edgecolor="C2",
+                                facecolor="none",
+                                alpha=1.0,
+                                zorder=-1,
+                            )
+                        )
+
+                    i = i + 1
+
+            legend_handles: List[Patch] = []
+
+            if self.highlight_selected_views:
+                legend_handles.append(
+                    Patch(
+                        facecolor="C2",
+                        edgecolor="C2",
+                        label="Selected View",
+                    )
+                )
+
+            if self.highlight_random_views:
+                legend_handles.append(
+                    Patch(
+                        facecolor="C1",
+                        edgecolor="C1",
+                        label="Random View",
+                    )
+                )
+
+            if len(legend_handles) > 0:
+                axes[0][-1].legend(
+                    handles=legend_handles,
+                    loc="upper left",
+                    fontsize=24,
+                )
+                place_legend_outside(axes[0][-1])
+
+            fig.set_facecolor((0, 0, 0, 0))
+
+            fig.tight_layout()
+
+            save_figure(fig, self.output_dir / "view_text_embedding_similarity.png")
 
 
 @dataclass
@@ -1071,6 +1316,7 @@ class EmbeddingTSNECorrespondence(EmbeddingCorrespondence):
 
 commands = {
     "sample_text_embedding_similarity": SampleTextEmbeddingSimilarity(),
+    "view_text_embedding_similarity": ViewTextEmbeddingSimilarity(),
     "selected_view_embedding_similarity": SelectedViewEmbeddingSimilarity(),
     "pca_correspondence": EmbeddingPCACorrespondence(),
     "umap_correspondence": EmbeddingUMAPCorrespondence(),

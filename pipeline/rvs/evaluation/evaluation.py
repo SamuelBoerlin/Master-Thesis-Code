@@ -235,7 +235,7 @@ class Evaluation:
         CONSOLE.log("Setting up inputs...")
         self.input_pipelines = self.__setup_inputs()
 
-        if self._debug_hook is None and (
+        if self._debug_hook is not None or (
             self.config.runtime.partial_results
             or PipelineStage.OUTPUT
             in PipelineStage.between(
