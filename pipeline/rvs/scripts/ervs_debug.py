@@ -1,14 +1,5 @@
 import os
 
-import torch
-from sklearn.decomposition import PCA
-from torch import Tensor
-
-from rvs.evaluation.evaluation_method import load_result
-from rvs.evaluation.lvis import Category
-from rvs.utils.cache import get_evaluation_prompt_embedding_cache_key, get_pipeline_render_embedding_cache_key
-from rvs.utils.nerfstudio import transform_to_ns_field_space
-
 # TODO: This should probably be elsewhere
 # Required for headless rendering with pyrenderer and trimesh
 os.environ["PYOPENGL_PLATFORM"] = "egl"
@@ -21,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import matplotlib.cm
 import matplotlib.colors
 import numpy as np
+import torch
 import tyro
 import umap
 from lerf.encoders.openclip_encoder import OpenCLIPNetwork
@@ -40,15 +32,21 @@ from nerfstudio.fields.base_field import Field
 from nerfstudio.utils.rich_utils import CONSOLE
 from numpy.typing import NDArray
 from PIL import Image, Image as im
+from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+from torch import Tensor
 
 from rvs.evaluation.debug import DebugContext, Uid
 from rvs.evaluation.evaluation import Evaluation, EvaluationConfig
+from rvs.evaluation.evaluation_method import load_result
+from rvs.evaluation.lvis import Category
 from rvs.pipeline.embedding import DefaultEmbeddingTypes
 from rvs.pipeline.stage import PipelineStage
 from rvs.pipeline.views import View
+from rvs.utils.cache import get_evaluation_prompt_embedding_cache_key, get_pipeline_render_embedding_cache_key
 from rvs.utils.config import find_config_working_dir, load_config
 from rvs.utils.debug import render_sample, render_sample_positions, render_sample_positions_and_colors
+from rvs.utils.nerfstudio import transform_to_ns_field_space
 from rvs.utils.plot import fit_suptitle, image_grid_plot, place_legend_outside, save_figure
 from rvs.utils.random import derive_rng
 
