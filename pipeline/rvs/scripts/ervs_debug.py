@@ -276,8 +276,17 @@ class ViewTextEmbeddingSimilarity(Command):
 
     sort_by_similarity: bool = True
 
+    show_only_top_n: Optional[int] = None
+
+    show_only_bottom_n: Optional[int] = None
+
     def _run(self, ctx: DebugContext) -> None:
         if ctx.stage == PipelineStage.OUTPUT:
+            if (
+                self.show_only_top_n is not None or self.show_only_bottom_n is not None
+            ) and not self.sort_by_similarity:
+                raise ValueError("Can only use show_only_top_n or show_only_bottom_n if sort_by_similarity=True")
+
             CONSOLE.log(f"Embedding prompt={self.prompt}")
 
             prompt_embedding = ctx.eval.embedder.embed_text_numpy(
@@ -327,8 +336,6 @@ class ViewTextEmbeddingSimilarity(Command):
             images_indices: List[int] = []
             images_embeddings: List[NDArray] = []
             images_similarity: List[float] = []
-            min_similarity = 1.0
-            max_similarity = -1.0
 
             for view_indices in view_indices_list:
                 for view_idx in view_indices:
@@ -358,8 +365,6 @@ class ViewTextEmbeddingSimilarity(Command):
                         images_embeddings.append(image_embedding)
 
                         similarity = np.dot(image_embedding, prompt_embedding)
-                        min_similarity = min(min_similarity, similarity)
-                        max_similarity = max(max_similarity, similarity)
                         images_similarity.append(similarity)
 
             if self.sort_by_similarity:
@@ -370,11 +375,19 @@ class ViewTextEmbeddingSimilarity(Command):
                 def sort(lst: List) -> List:
                     return [lst[i] for i in sort_indices]
 
-                images = sort(images)
-                images_files = sort(images_files)
-                images_indices = sort(images_indices)
-                images_embeddings = sort(images_embeddings)
-                images_similarity = sort(images_similarity)
+                def truncate(lst: List) -> List:
+                    top_n = self.show_only_top_n if self.show_only_top_n is not None else len(lst)
+                    bottom_n = self.show_only_bottom_n if self.show_only_bottom_n is not None else len(lst)
+                    return [lst[i] for i in range(len(lst)) if i < top_n or (len(lst) - 1 - i) < bottom_n]
+
+                images = truncate(sort(images))
+                images_files = truncate(sort(images_files))
+                images_indices = truncate(sort(images_indices))
+                images_embeddings = truncate(sort(images_embeddings))
+                images_similarity = truncate(sort(images_similarity))
+
+            min_similarity = min(images_similarity)
+            max_similarity = max(images_similarity)
 
             CONSOLE.log("Creating plot")
 
