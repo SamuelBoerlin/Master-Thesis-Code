@@ -173,18 +173,20 @@ class SphereViews(Views):
             fig_size[1] = fig_size[0]
 
             fig.set_size_inches(fig_size[0], fig_size[1])
+            fig.subplots_adjust(0, 0, 1, 1)
 
             ax: Axes = fig.add_subplot(111, projection="3d")
 
             ax.set_axis_off()
+
+            crop = 0.25
+            ax.set_position([-crop, -crop, 1 + crop * 2, 1 + crop * 2])
 
             camera_transforms_plot(
                 ax,
                 [view.transform for view in views],
                 cull_behind_origin=True,
             )
-
-            fig.tight_layout()
 
             save_figure(fig, views_file)
 
@@ -274,18 +276,20 @@ class FermatSpiralViews(Views):
             fig_size[1] = fig_size[0]
 
             fig.set_size_inches(fig_size[0], fig_size[1])
+            fig.subplots_adjust(0, 0, 1, 1)
 
             ax: Axes = fig.add_subplot(111, projection="3d")
 
             ax.set_axis_off()
+
+            crop = 0.25
+            ax.set_position([-crop, -crop, 1 + crop * 2, 1 + crop * 2])
 
             camera_transforms_plot(
                 ax,
                 [view.transform for view in views],
                 cull_behind_origin=True,
             )
-
-            fig.tight_layout()
 
             save_figure(fig, views_file)
 

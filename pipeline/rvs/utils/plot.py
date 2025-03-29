@@ -681,6 +681,7 @@ def camera_transforms_plot(
     frustum_line_width: float = 0.5,
     show_world_axes: bool = True,
     world_axes_size: float = 0.25,
+    world_axes_line_width: float = 3.0,
 ) -> None:
     ax: Axes = ax3d  # type hints not working for Axes3D?
 
@@ -720,9 +721,9 @@ def camera_transforms_plot(
         world_axis_y = -np.array([0, 1, 0]) * world_axes_size
         world_axis_z = np.array([0, 0, 1]) * world_axes_size
 
-        ax.plot(*[[world_origin[i], world_axis_x[i]] for i in range(3)], color="red")
-        ax.plot(*[[world_origin[i], world_axis_y[i]] for i in range(3)], color="blue")
-        ax.plot(*[[world_origin[i], world_axis_z[i]] for i in range(3)], color="green")
+        ax.plot(*[[world_origin[i], world_axis_x[i]] for i in range(3)], color="red", linewidth=world_axes_line_width)
+        ax.plot(*[[world_origin[i], world_axis_y[i]] for i in range(3)], color="blue", linewidth=world_axes_line_width)
+        ax.plot(*[[world_origin[i], world_axis_z[i]] for i in range(3)], color="green", linewidth=world_axes_line_width)
 
     for transform in transforms:
         transform = to_z_up @ transform
