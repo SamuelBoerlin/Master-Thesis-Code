@@ -679,10 +679,23 @@ def camera_transforms_plot(
     frustum_height: float = 0.15,
     frustum_depth: float = 0.15,
     frustum_line_width: float = 0.5,
+    frustum_colors: Optional[Union[str, List[str]]] = None,
     show_world_axes: bool = True,
     world_axes_size: float = 0.25,
     world_axes_line_width: float = 3.0,
+    xlim: Optional[Tuple[float, float]] = None,
+    ylim: Optional[Tuple[float, float]] = None,
+    zlim: Optional[Tuple[float, float]] = None,
 ) -> None:
+    if frustum_colors is None:
+        frustum_colors = "black"
+
+    if not isinstance(frustum_colors, List):
+        frustum_colors = [frustum_colors] * len(transforms)
+
+    if len(frustum_colors) != len(transforms):
+        raise ValueError("len(frustum_colors) != len(transforms)")
+
     ax: Axes = ax3d  # type hints not working for Axes3D?
 
     ax.set_box_aspect([1, 1, 1])
@@ -725,7 +738,7 @@ def camera_transforms_plot(
         ax.plot(*[[world_origin[i], world_axis_y[i]] for i in range(3)], color="blue", linewidth=world_axes_line_width)
         ax.plot(*[[world_origin[i], world_axis_z[i]] for i in range(3)], color="green", linewidth=world_axes_line_width)
 
-    for transform in transforms:
+    for i, transform in enumerate(transforms):
         transform = to_z_up @ transform
 
         dx = transform.T[0, :3]
@@ -759,8 +772,17 @@ def camera_transforms_plot(
         for frustum_line in frustum_lines:
             ax.plot(
                 *[[frustum_line[0][i], frustum_line[1][i]] for i in range(3)],
-                color=get_color("black"),
+                color=get_color(frustum_colors[i]),
                 linewidth=frustum_line_width,
             )
 
-        ax.scatter(point[0], point[1], point[2], color=get_color("black"), s=10)
+        ax.scatter(point[0], point[1], point[2], color=get_color(frustum_colors[i]), s=10)
+
+    if xlim is not None:
+        ax3d.set_xlim(xlim[0], xlim[1])
+
+    if ylim is not None:
+        ax3d.set_ylim(ylim[0], ylim[1])
+
+    if zlim is not None:
+        ax3d.set_zlim(zlim[0], zlim[1])

@@ -41,13 +41,15 @@ from rvs.evaluation.evaluation import Evaluation, EvaluationConfig
 from rvs.evaluation.evaluation_method import load_result
 from rvs.evaluation.lvis import Category
 from rvs.pipeline.embedding import DefaultEmbeddingTypes
+from rvs.pipeline.renderer import TrimeshRendererConfig
 from rvs.pipeline.stage import PipelineStage
+from rvs.pipeline.state import Normalization
 from rvs.pipeline.views import View
 from rvs.utils.cache import get_evaluation_prompt_embedding_cache_key, get_pipeline_render_embedding_cache_key
 from rvs.utils.config import find_config_working_dir, load_config
 from rvs.utils.debug import render_sample, render_sample_positions, render_sample_positions_and_colors
 from rvs.utils.nerfstudio import transform_to_ns_field_space
-from rvs.utils.plot import fit_suptitle, image_grid_plot, place_legend_outside, save_figure
+from rvs.utils.plot import camera_transforms_plot, fit_suptitle, image_grid_plot, place_legend_outside, save_figure
 from rvs.utils.random import derive_rng
 
 
@@ -419,6 +421,23 @@ class ViewTextEmbeddingSimilarity(Command):
                         (0.925, 0.075),
                         horizontalalignment="right",
                         verticalalignment="bottom",
+                        xycoords="axes fraction",
+                        fontsize=24.0,
+                        fontweight="bold",
+                        bbox={
+                            "facecolor": fig.get_facecolor(),
+                            "alpha": 0.5,
+                            "boxstyle": "square",
+                            "edgecolor": "none",
+                            "linewidth": 0,
+                        },
+                    )
+
+                    ax.annotate(
+                        f"View {view_idx + 1}",
+                        (1.0 - 0.925, 1.0 - 0.075),
+                        horizontalalignment="left",
+                        verticalalignment="top",
                         xycoords="axes fraction",
                         fontsize=24.0,
                         fontweight="bold",
@@ -1325,6 +1344,151 @@ class EmbeddingTSNECorrespondence(EmbeddingCorrespondence):
         save_figure(fig, self.output_dir / "tsne_correspondence.png")
 
 
+@dataclass
+class ViewsVisualization(Command):
+    views: List[int] = tyro.MISSING
+
+    view_frustum_colors: Optional[List[str]] = None
+
+    view_frustum_styles: Optional[List[str]] = None
+
+    legend: Optional[Dict[str, str]] = None
+
+    model_scale: float = 2.0
+
+    view_radius: float = 2.0
+
+    azimuth: float = 0.0
+
+    def _run(self, ctx: DebugContext) -> None:
+        if ctx.stage == PipelineStage.RENDER_VIEWS:
+            if self.view_frustum_colors is not None and len(self.view_frustum_colors) != len(self.views):
+                raise ValueError("len(self.view_frustum_colors) != len(self.views)")
+
+            if self.view_frustum_styles is not None and len(self.view_frustum_styles) != len(self.views):
+                raise ValueError("len(self.view_frustum_styles) != len(self.views)")
+
+            fig = plt.figure()
+
+            fig.set_facecolor((0, 0, 0, 0))
+
+            fig_size = fig.get_size_inches()
+            fig_size[1] = fig_size[0]
+
+            fig.set_size_inches(fig_size[0], fig_size[1])
+            fig.subplots_adjust(0, 0, 1, 1)
+
+            ax2d: Axes = fig.add_subplot(111)
+            ax2d.set_position([0, 0, 1, 1])
+
+            ax3d: Optional[Axes] = fig.add_axes(ax2d.get_position(), projection="3d")
+            ax3d.patch.set_alpha(0)
+
+            fov = TrimeshRendererConfig().fov
+            ax3d.set_proj_type("persp", focal_length=1.0 / np.tan(np.deg2rad(fov) / 2.0))
+
+            ax2d.set_axis_off()
+            ax3d.set_axis_off()
+
+            angle_y = np.deg2rad(ax3d.azim + 90 + self.azimuth)
+            rot_y = np.array(
+                [
+                    [np.cos(angle_y), 0, np.sin(angle_y), 0],
+                    [0, 1, 0, 0],
+                    [-np.sin(angle_y), 0, np.cos(angle_y), 0],
+                    [0, 0, 0, 1],
+                ]
+            )
+
+            angle_x = np.deg2rad(-ax3d.elev)
+            rot_x = np.array(
+                [
+                    [1, 0, 0, 0],
+                    [0, np.cos(angle_x), -np.sin(angle_x), 0],
+                    [0, np.sin(angle_x), np.cos(angle_x), 0],
+                    [0, 0, 0, 1],
+                ]
+            )
+
+            rotation = np.eye(4)
+            rotation = np.dot(rotation, rot_y)
+            rotation = np.dot(rotation, rot_x)
+
+            translation = np.eye(4)
+            translation[0, 3] = 0.0
+            translation[1, 3] = 0.0
+            translation[2, 3] = 10.0
+
+            transform = np.dot(rotation, translation)
+
+            render_view = View(index=-1, transform=transform)
+
+            render: im.Image = None
+
+            def callback(v: View, i: im.Image) -> None:
+                nonlocal render
+                render = i.copy()
+
+            CONSOLE.log("Rendering model")
+
+            normalization = ctx.state.model_normalization
+            normalization = Normalization(scale=normalization.scale * self.model_scale, offset=normalization.offset)
+
+            render_sample(
+                ctx.state.pipeline.config.model_file,
+                render_view,
+                normalization,
+                callback=callback,
+                render_as_plot=False,
+            )
+
+            assert render is not None
+
+            ax2d.imshow(render)
+
+            transforms: List[NDArray] = []
+
+            for view_idx in self.views:
+                CONSOLE.log(f"Loading view={view_idx}")
+
+                view: View = None
+
+                for v in ctx.state.training_views:
+                    if v.index == view_idx:
+                        view = v
+
+                if view is None:
+                    raise ValueError(f"View with index {view_idx} not found")
+
+                angle_y = np.deg2rad(-self.azimuth)
+                rot_y = np.array(
+                    [
+                        [np.cos(angle_y), 0, np.sin(angle_y), 0],
+                        [0, 1, 0, 0],
+                        [-np.sin(angle_y), 0, np.cos(angle_y), 0],
+                        [0, 0, 0, 1],
+                    ]
+                )
+
+                transforms.append(rot_y @ view.transform)
+
+            if True:
+                camera_transforms_plot(
+                    ax3d,
+                    transforms,
+                    show_world_axes=False,
+                    frustum_line_width=2.0,
+                    frustum_colors=self.view_frustum_colors,
+                    xlim=(-self.view_radius, self.view_radius),
+                    ylim=(-self.view_radius, self.view_radius),
+                    zlim=(-self.view_radius, self.view_radius),
+                )
+
+            CONSOLE.log("Saving plot")
+
+            save_figure(fig, self.output_dir / "views_visualization.png")
+
+
 commands = {
     "sample_text_embedding_similarity": SampleTextEmbeddingSimilarity(),
     "view_text_embedding_similarity": ViewTextEmbeddingSimilarity(),
@@ -1333,6 +1497,7 @@ commands = {
     "umap_correspondence": EmbeddingUMAPCorrespondence(),
     "tsne_correspondence": EmbeddingTSNECorrespondence(),
     "field_weights": FieldWeights(),
+    "views_visualization": ViewsVisualization(),
 }
 
 SubcommandTypeUnion = tyro.conf.SuppressFixed[
