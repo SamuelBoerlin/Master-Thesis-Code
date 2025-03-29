@@ -12,6 +12,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import MaxNLocator
 from matplotlib.transforms import Bbox
+from mpl_toolkits.mplot3d.axes3d import Axes3D
 from numpy.typing import NDArray
 from PIL import Image as im
 
@@ -667,3 +668,98 @@ def fit_suptitle(fig: Figure, body: Callable[[], T], suptitle: str, suptitle_fon
     fig.subplots_adjust(left=0.0, right=1.0, top=(1.0 - top_padding_inches / fig_size[1]), bottom=0.0)
 
     return result
+
+
+def camera_transforms_plot(
+    ax3d: Axes3D,
+    transforms: List[NDArray],
+    sphere_mesh_radius: Optional[float] = None,
+    cull_behind_origin: Optional[bool] = False,
+    frustum_width: float = 0.2,
+    frustum_height: float = 0.15,
+    frustum_depth: float = 0.15,
+    frustum_line_width: float = 0.5,
+    show_world_axes: bool = True,
+    world_axes_size: float = 0.25,
+) -> None:
+    ax: Axes = ax3d  # type hints not working for Axes3D?
+
+    ax.set_box_aspect([1, 1, 1])
+
+    if sphere_mesh_radius is not None:
+        u, v = np.mgrid[0 : 2 * np.pi : 30j, 0 : np.pi : 15j]
+
+        x = np.cos(u) * np.sin(v) * sphere_mesh_radius
+        y = np.sin(u) * np.sin(v) * sphere_mesh_radius
+        z = np.cos(v) * sphere_mesh_radius
+
+        ax3d.plot_wireframe(x, y, z, color="lightgray", alpha=0.5)
+
+    rot_x = 0.5 * np.pi
+    to_z_up = np.array(
+        [
+            [1, 0, 0, 0],
+            [0, np.cos(rot_x), -np.sin(rot_x), 0],
+            [0, np.sin(rot_x), np.cos(rot_x), 0],
+            [0, 0, 0, 1],
+        ]
+    )
+
+    camera_dir = np.array(
+        [
+            -np.cos(np.deg2rad(ax3d.elev)) * np.cos(np.deg2rad(ax3d.azim)),
+            -np.cos(np.deg2rad(ax3d.elev)) * np.sin(np.deg2rad(ax3d.azim)),
+            -np.sin(np.deg2rad(ax3d.elev)),
+        ]
+    )
+
+    if show_world_axes:
+        world_origin = np.array([0, 0, 0])
+
+        world_axis_x = np.array([1, 0, 0]) * world_axes_size
+        world_axis_y = -np.array([0, 1, 0]) * world_axes_size
+        world_axis_z = np.array([0, 0, 1]) * world_axes_size
+
+        ax.plot(*[[world_origin[i], world_axis_x[i]] for i in range(3)], color="red")
+        ax.plot(*[[world_origin[i], world_axis_y[i]] for i in range(3)], color="blue")
+        ax.plot(*[[world_origin[i], world_axis_z[i]] for i in range(3)], color="green")
+
+    for transform in transforms:
+        transform = to_z_up @ transform
+
+        dx = transform.T[0, :3]
+        dy = transform.T[1, :3]
+        dz = transform.T[2, :3]
+        point = transform.T[3, :3]
+
+        def get_color(color: Any) -> Any:
+            if cull_behind_origin and np.dot(point, camera_dir) > 0:
+                return "none"
+            return color
+
+        frustum_corners = [
+            point - dx * frustum_width + dy * frustum_height - dz * frustum_depth,
+            point + dx * frustum_width + dy * frustum_height - dz * frustum_depth,
+            point + dx * frustum_width - dy * frustum_height - dz * frustum_depth,
+            point - dx * frustum_width - dy * frustum_height - dz * frustum_depth,
+        ]
+
+        frustum_lines = [
+            [frustum_corners[0], frustum_corners[1]],
+            [frustum_corners[1], frustum_corners[2]],
+            [frustum_corners[2], frustum_corners[3]],
+            [frustum_corners[3], frustum_corners[0]],
+            [frustum_corners[0], point],
+            [frustum_corners[1], point],
+            [frustum_corners[2], point],
+            [frustum_corners[3], point],
+        ]
+
+        for frustum_line in frustum_lines:
+            ax.plot(
+                *[[frustum_line[0][i], frustum_line[1][i]] for i in range(3)],
+                color=get_color("black"),
+                linewidth=frustum_line_width,
+            )
+
+        ax.scatter(point[0], point[1], point[2], color=get_color("black"), s=10)

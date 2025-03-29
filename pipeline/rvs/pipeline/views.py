@@ -3,12 +3,15 @@ from pathlib import Path
 from typing import List, Optional, Type
 
 import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 from nerfstudio.configs.base_config import InstantiateConfig
 from numpy.typing import NDArray
 
 from rvs.pipeline.io import PipelineIO
 from rvs.pipeline.stage import PipelineStage
 from rvs.pipeline.state import PipelineState
+from rvs.utils.plot import camera_transforms_plot, save_figure
 
 
 @dataclass
@@ -98,7 +101,7 @@ class SphereViews(Views):
         self.config = config
 
     def generate(self, pipeline_state: PipelineState) -> List[View]:
-        views = []
+        views: List[View] = []
 
         for i in range(0, self.config.azimuth_views):
             for j in range(0, self.config.elevation_views):
@@ -160,6 +163,30 @@ class SphereViews(Views):
                     transform = np.dot(rotation, translation)
 
                     views.append(View(index=len(views), transform=transform))
+
+        if pipeline_state.scratch_output_dir is not None:
+            views_file = pipeline_state.scratch_output_dir / "views.png"
+
+            fig = plt.figure()
+
+            fig_size = fig.get_size_inches()
+            fig_size[1] = fig_size[0]
+
+            fig.set_size_inches(fig_size[0], fig_size[1])
+
+            ax: Axes = fig.add_subplot(111, projection="3d")
+
+            ax.set_axis_off()
+
+            camera_transforms_plot(
+                ax,
+                [view.transform for view in views],
+                cull_behind_origin=True,
+            )
+
+            fig.tight_layout()
+
+            save_figure(fig, views_file)
 
         return views
 
@@ -237,6 +264,30 @@ class FermatSpiralViews(Views):
                 ).T
 
                 views.append(View(index=len(views), transform=transform))
+
+        if pipeline_state.scratch_output_dir is not None:
+            views_file = pipeline_state.scratch_output_dir / "views.png"
+
+            fig = plt.figure()
+
+            fig_size = fig.get_size_inches()
+            fig_size[1] = fig_size[0]
+
+            fig.set_size_inches(fig_size[0], fig_size[1])
+
+            ax: Axes = fig.add_subplot(111, projection="3d")
+
+            ax.set_axis_off()
+
+            camera_transforms_plot(
+                ax,
+                [view.transform for view in views],
+                cull_behind_origin=True,
+            )
+
+            fig.tight_layout()
+
+            save_figure(fig, views_file)
 
         return views
 
