@@ -32,7 +32,7 @@ from rvs.pipeline.sampler import (
     FarthestPointSamplingDensityTrimeshPositonSamplerConfig,
     MinDistanceTrimeshPositionSamplerConfig,
 )
-from rvs.pipeline.selection import MostSimilarToCentroidTrainingViewSelectionConfig
+from rvs.pipeline.selection import MostSimilarToCentroidTrainingViewSelectionConfig, SpatialViewSelectionConfig
 from rvs.pipeline.stage import PipelineStage
 from rvs.pipeline.transform import FixedPCATransformConfig, IdentityTransformConfig, VariancePCATransformConfig
 from rvs.pipeline.views import FermatSpiralViewsConfig, SphereViewsConfig
@@ -164,6 +164,10 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
         "best_training_selection": (
             "Views selected from training views that are most similar to cluster embeddings",
             MostSimilarToCentroidTrainingViewSelectionConfig(),
+        ),
+        "spatial_view_selection": (
+            "Views are selected based on the spatial positions of the clustered embeddings samples",
+            SpatialViewSelectionConfig(),
         ),
     },
 }
