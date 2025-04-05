@@ -43,6 +43,9 @@ class ViewSelection:
 class MostSimilarToCentroidTrainingViewSelectionConfig(ViewSelectionConfig):
     _target: Type = field(default_factory=lambda: MostSimilarToCentroidTrainingViewSelection)
 
+    similarity: str = "dot"
+    """Similarity/distance function. Must be one of: 'dot', 'euclidean'."""
+
 
 class BestTrainingViewSelectionConfig(MostSimilarToCentroidTrainingViewSelectionConfig):
     """Deprecated, only for backwards compatibility"""
@@ -68,6 +71,9 @@ class MostSimilarToCentroidTrainingViewSelection(ViewSelection, RequirePipelineS
         soft_classifier: Callable[[NDArray], NDArray],
         pipeline_state: PipelineState,
     ) -> List[View]:
+        if self.config.similarity not in ("dot", "euclidean"):
+            raise ValueError("Similarity/distance funciton must be one of: 'dot', 'euclidean'")
+
         assert pipeline_state.training_views is not None
         assert pipeline_state.transform_parameters is not None
         assert pipeline_state.cluster_parameters is not None
@@ -118,7 +124,14 @@ class MostSimilarToCentroidTrainingViewSelection(ViewSelection, RequirePipelineS
             embedding = transformed_embeddings[i]
 
             for j in range(num_clusters):
-                sim = np.dot(centroids[j], embedding)
+                sim: float = None
+
+                if self.config.similarity == "dot":
+                    sim = np.dot(centroids[j], embedding)
+                elif self.config.similarity == "euclidean":
+                    sim = np.linalg.norm(centroids[j] - embedding)
+
+                assert sim is not None
 
                 if sim > best_sim[j]:
                     best_sim[j] = sim
