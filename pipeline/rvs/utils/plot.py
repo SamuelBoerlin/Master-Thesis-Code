@@ -160,6 +160,7 @@ def precision_recall_plot(
     legend_loc: Union[str, int] = None,
     markers: Optional[str] = "ov^+xD*",
     marker_sizes: List[float] = [10, 9, 9, 8, 8, 11, 6],
+    marker_only_at_recall_change: bool = True,
     fillstyle: str = "none",
     alpha: float = 0.8,
     fill_alpha: float = 0.05,
@@ -214,8 +215,20 @@ def precision_recall_plot(
             zorder=zoffset,
         )[0]
 
-        # Hide first marker
-        line.set_markevery(every=list(range(1, len(xs))))
+        visible_markers = list(range(0, len(xs)))
+
+        if len(visible_markers) > 0:
+            # Hide first marker
+            visible_markers[0] = -1
+
+        if marker_only_at_recall_change:
+            for i in range(1, len(xs) - 1):
+                if abs(xs[i - 1] - xs[i]) > 0.0000001 or abs(xs[i + 1] - xs[i]) > 0.0000001:
+                    pass
+                else:
+                    visible_markers[i] = -1
+
+        line.set_markevery(every=[index for index in visible_markers if index >= 0])
 
         lines.append((line, xs, ys))
 
