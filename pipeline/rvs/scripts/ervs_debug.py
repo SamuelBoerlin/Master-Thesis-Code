@@ -1,5 +1,8 @@
 import os
 
+from rvs.evaluation.analysis.precision_recall import plot_precision_recall_auc_grid
+from rvs.evaluation.analysis.utils import Method
+
 # TODO: This should probably be elsewhere
 # Required for headless rendering with pyrenderer and trimesh
 os.environ["PYOPENGL_PLATFORM"] = "egl"
@@ -7,7 +10,7 @@ os.environ["PYGLET_HEADLESS"] = "1"
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import matplotlib.cm
 import matplotlib.colors
@@ -48,6 +51,7 @@ from rvs.pipeline.views import View
 from rvs.utils.cache import get_evaluation_prompt_embedding_cache_key, get_pipeline_render_embedding_cache_key
 from rvs.utils.config import find_config_working_dir, load_config
 from rvs.utils.debug import render_sample, render_sample_positions, render_sample_positions_and_colors
+from rvs.utils.map import get_keys_of_nested_maps
 from rvs.utils.nerfstudio import transform_to_ns_field_space
 from rvs.utils.plot import camera_transforms_plot, fit_suptitle, image_grid_plot, place_legend_outside, save_figure
 from rvs.utils.random import derive_rng
@@ -1489,6 +1493,115 @@ class ViewsVisualization(Command):
             save_figure(fig, self.output_dir / "views_visualization.png")
 
 
+@dataclass
+class PrecisionRecallGrid(Command):
+    top_k: Optional[int] = None
+    bottom_k: Optional[int] = None
+
+    max_diff: bool = True
+
+    def _run(self, ctx: DebugContext) -> None:
+        if ctx.stage == PipelineStage.SAMPLE_VIEWS:  # don't need anything really
+            precision_recall_auc: Dict[Method, Dict[Category, float]] = load_result(
+                ctx.eval.results_dir / "dumps" / "precision_recall_auc.pkl"
+            )
+            filtered_precision_recall_auc = precision_recall_auc
+
+            group_1_methods: List[Method] = [
+                "avg_embedding_of_selected_views",
+                "best_embedding_of_selected_views_wrt_query",
+            ]
+            group_2_methods: List[Method] = [
+                "avg_embedding_of_random_views",
+                "best_embedding_of_random_views_wrt_query",
+            ]
+
+            categories = get_keys_of_nested_maps(precision_recall_auc)
+
+            top_diffs: List[Tuple[Category, float]] = []
+            bottom_diffs: List[Tuple[Category, float]] = []
+
+            for category in categories:
+                group_1_min: float = None
+                group_1_max: float = None
+
+                for method in group_1_methods:
+                    pr_auc = precision_recall_auc[method][category]
+
+                    if group_1_min is None:
+                        group_1_min = pr_auc
+                    else:
+                        group_1_min = min(group_1_min, pr_auc)
+
+                    if group_1_max is None:
+                        group_1_max = pr_auc
+                    else:
+                        group_1_max = max(group_1_max, pr_auc)
+
+                group_2_min: float = None
+                group_2_max: float = None
+
+                for method in group_2_methods:
+                    pr_auc = precision_recall_auc[method][category]
+
+                    if group_2_min is None:
+                        group_2_min = pr_auc
+                    else:
+                        group_2_min = min(group_2_min, pr_auc)
+
+                    if group_2_max is None:
+                        group_2_max = pr_auc
+                    else:
+                        group_2_max = max(group_2_max, pr_auc)
+
+                if self.max_diff:
+                    top_diffs.append((category, group_1_max - group_2_min))
+                    bottom_diffs.append((category, group_2_max - group_1_min))
+                else:
+                    top_diffs.append((category, group_1_min - group_2_max))
+                    bottom_diffs.append((category, group_2_min - group_1_max))
+
+            top_diffs = sorted(top_diffs, key=lambda t: t[1], reverse=True)
+            bottom_diffs = sorted(bottom_diffs, key=lambda t: t[1], reverse=True)
+
+            if self.top_k is not None or self.bottom_k is not None:
+                filtered_precision_recall_auc = dict()
+
+                included_categories: List[Category] = []
+
+                if self.top_k is not None:
+                    included_categories.extend([t[0] for t in top_diffs[: self.top_k]])
+
+                if self.bottom_k is not None:
+                    included_categories.extend(
+                        [t[0] for t in bottom_diffs if t[0] not in included_categories][: self.bottom_k]
+                    )
+
+                for method, values in precision_recall_auc.items():
+                    new_values: Dict[Category, float] = dict()
+
+                    for category in included_categories:
+                        if category in values:
+                            new_values[category] = values[category]
+
+                    filtered_precision_recall_auc[method] = new_values
+
+            method_titles: Dict[Method, str] = {
+                "best_embedding_of_views_wrt_ground_truth": "Best Embedding of Views w.r.t. Ground Truth",
+                "avg_embedding_of_selected_views": "Average Embedding of Selected Views",
+                "best_embedding_of_selected_views_wrt_query": "Best Embedding of Selected Views w.r.t. Query",
+                "avg_embedding_of_random_views": "Average Embedding of Random Views",
+                "best_embedding_of_random_views_wrt_query": "Best Embedding of Random Views w.r.t. Query",
+            }
+
+            plot_precision_recall_auc_grid(
+                filtered_precision_recall_auc,
+                self.output_dir / "precision_recall_auc_grid.png",
+                # category_names=category_names_with_sizes,
+                method_names=method_titles,
+            )
+
+
 commands = {
     "sample_text_embedding_similarity": SampleTextEmbeddingSimilarity(),
     "view_text_embedding_similarity": ViewTextEmbeddingSimilarity(),
@@ -1498,6 +1611,7 @@ commands = {
     "tsne_correspondence": EmbeddingTSNECorrespondence(),
     "field_weights": FieldWeights(),
     "views_visualization": ViewsVisualization(),
+    "precision_recall_grid": PrecisionRecallGrid(),
 }
 
 SubcommandTypeUnion = tyro.conf.SuppressFixed[
