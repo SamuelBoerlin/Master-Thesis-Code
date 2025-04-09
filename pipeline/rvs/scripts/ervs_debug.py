@@ -1,8 +1,5 @@
 import os
 
-from rvs.evaluation.analysis.precision_recall import plot_precision_recall_auc_grid
-from rvs.evaluation.analysis.utils import Method
-
 # TODO: This should probably be elsewhere
 # Required for headless rendering with pyrenderer and trimesh
 os.environ["PYOPENGL_PLATFORM"] = "egl"
@@ -10,7 +7,7 @@ os.environ["PYGLET_HEADLESS"] = "1"
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.cm
 import matplotlib.colors
@@ -39,6 +36,8 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from torch import Tensor
 
+from rvs.evaluation.analysis.precision_recall import plot_precision_recall, plot_precision_recall_auc_grid
+from rvs.evaluation.analysis.utils import Method
 from rvs.evaluation.debug import DebugContext, Uid
 from rvs.evaluation.evaluation import Evaluation, EvaluationConfig
 from rvs.evaluation.evaluation_method import load_result
@@ -53,7 +52,15 @@ from rvs.utils.config import find_config_working_dir, load_config
 from rvs.utils.debug import render_sample, render_sample_positions, render_sample_positions_and_colors
 from rvs.utils.map import get_keys_of_nested_maps
 from rvs.utils.nerfstudio import transform_to_ns_field_space
-from rvs.utils.plot import camera_transforms_plot, fit_suptitle, image_grid_plot, place_legend_outside, save_figure
+from rvs.utils.plot import (
+    Precision,
+    Recall,
+    camera_transforms_plot,
+    fit_suptitle,
+    image_grid_plot,
+    place_legend_outside,
+    save_figure,
+)
 from rvs.utils.random import derive_rng
 
 
@@ -1602,6 +1609,33 @@ class PrecisionRecallGrid(Command):
             )
 
 
+@dataclass
+class PrecisionRecallCurve(Command):
+    category: str = tyro.MISSING
+
+    def _run(self, ctx: DebugContext) -> None:
+        if ctx.stage == PipelineStage.SAMPLE_VIEWS:  # don't need anything really
+            precision_recall: Dict[Method, Dict[Category, Tuple[Precision, Recall, int]]] = load_result(
+                ctx.eval.results_dir / "dumps" / "precision_recall.pkl"
+            )
+
+            method_titles: Dict[Method, str] = {
+                "best_embedding_of_views_wrt_ground_truth": "Best Embedding of Views w.r.t. Ground Truth",
+                "avg_embedding_of_selected_views": "Average Embedding of Selected Views",
+                "best_embedding_of_selected_views_wrt_query": "Best Embedding of Selected Views w.r.t. Query",
+                "avg_embedding_of_random_views": "Average Embedding of Random Views",
+                "best_embedding_of_random_views_wrt_query": "Best Embedding of Random Views w.r.t. Query",
+            }
+
+            plot_precision_recall(
+                precision_recall,
+                4000,
+                self.output_dir / "precision_recall.png",
+                category_filter={self.category},
+                method_names=method_titles,
+            )
+
+
 commands = {
     "sample_text_embedding_similarity": SampleTextEmbeddingSimilarity(),
     "view_text_embedding_similarity": ViewTextEmbeddingSimilarity(),
@@ -1612,6 +1646,7 @@ commands = {
     "field_weights": FieldWeights(),
     "views_visualization": ViewsVisualization(),
     "precision_recall_grid": PrecisionRecallGrid(),
+    "precision_recall_curve": PrecisionRecallCurve(),
 }
 
 SubcommandTypeUnion = tyro.conf.SuppressFixed[
