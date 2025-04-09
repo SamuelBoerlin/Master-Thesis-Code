@@ -636,6 +636,7 @@ def comparison_grid_plot(
                 va="center",
                 color="w",
                 path_effects=[pe.withStroke(linewidth=2, foreground="black")],
+                fontweight="bold",
             )
 
 

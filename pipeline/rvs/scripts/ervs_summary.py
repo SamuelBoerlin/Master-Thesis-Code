@@ -27,6 +27,8 @@ class Args:
 
     output_dir: Path = tyro.MISSING
 
+    value_format: str = "{0:.2f}"
+
 
 @dataclass
 class Eval:
@@ -75,7 +77,11 @@ def main(args: Args) -> None:
 
     CONSOLE.rule("Calculate average precision/recall")
     plot_avg_precision_recall_auc(
-        args.output_dir / "precision_recall_auc.png", evals, args.category, method_titles=method_titles
+        args.output_dir / "precision_recall_auc.png",
+        evals,
+        args.category,
+        method_titles=method_titles,
+        value_format=args.value_format,
     )
 
 
@@ -84,6 +90,7 @@ def plot_avg_precision_recall_auc(
     evals: List[Eval],
     category: Optional[str],
     method_titles: Optional[Dict[Method, str]] = None,
+    value_format="{0:.2f}",
 ) -> None:
     all_avg_precision_recall_auc: Dict[int, Dict[Method, float]] = dict()
 
@@ -125,6 +132,7 @@ def plot_avg_precision_recall_auc(
         xlabels=[eval.name for eval in evals],
         ylabels=list(rename_methods_dict(methods, method_titles).keys()),
         colorbar_label="Average PR AUC",
+        value_format=value_format,
     )
 
     save_figure(fig, file)
