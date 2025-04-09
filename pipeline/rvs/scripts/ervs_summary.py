@@ -76,7 +76,7 @@ def main(args: Args) -> None:
     }
 
     CONSOLE.rule("Calculate average precision/recall")
-    plot_avg_precision_recall_auc(
+    plot_avg_precision_recall_auc_grid(
         args.output_dir / "precision_recall_auc.png",
         evals,
         args.category,
@@ -84,8 +84,34 @@ def main(args: Args) -> None:
         value_format=args.value_format,
     )
 
+    plot_avg_precision_recall_auc_dots(
+        args.output_dir / "precision_recall_auc_avg_dots.png",
+        evals,
+        "avg_embedding_of_selected_views",
+        "avg_embedding_of_random_views",
+        "Average Embedding",
+        args.category,
+        method_titles={
+            "avg_embedding_of_selected_views": "Selected Views",
+            "avg_embedding_of_random_views": "Random Views",
+        },
+    )
 
-def plot_avg_precision_recall_auc(
+    plot_avg_precision_recall_auc_dots(
+        args.output_dir / "precision_recall_auc_best_dots.png",
+        evals,
+        "best_embedding_of_selected_views_wrt_query",
+        "best_embedding_of_random_views_wrt_query",
+        "Best Embedding w.r.t. Query",
+        args.category,
+        method_titles={
+            "best_embedding_of_selected_views_wrt_query": "Selected Views",
+            "best_embedding_of_random_views_wrt_query": "Random Views",
+        },
+    )
+
+
+def plot_avg_precision_recall_auc_grid(
     file: Path,
     evals: List[Eval],
     category: Optional[str],
@@ -134,6 +160,108 @@ def plot_avg_precision_recall_auc(
         colorbar_label="Average PR AUC",
         value_format=value_format,
     )
+
+    save_figure(fig, file)
+
+
+def plot_avg_precision_recall_auc_dots(
+    file: Path,
+    evals: List[Eval],
+    method1: Method,
+    method2: Method,
+    title: str,
+    category: Optional[str],
+    method_titles: Optional[Dict[Method, str]] = None,
+) -> None:
+    m1_name = method1
+    if method_titles is not None and method1 in method_titles:
+        m1_name = method_titles[method1]
+
+    m2_name = method2
+    if method_titles is not None and method2 in method_titles:
+        m2_name = method_titles[method2]
+
+    m1_all_avg_precision_recall_auc: List[float] = []
+    m1_all_std_precision_recall_auc: List[float] = []
+
+    m2_all_avg_precision_recall_auc: List[float] = []
+    m2_all_std_precision_recall_auc: List[float] = []
+
+    for eval in tqdm(evals):
+        precision_recall_auc: Dict[Method, Dict[Category, float]] = load_result(
+            eval.dir / "results" / "dumps" / "precision_recall_auc.pkl"
+        )
+
+        m1_avg_precision_recall_auc: float = None
+        m1_std_precision_recall_auc: float = None
+
+        m2_avg_precision_recall_auc: float = None
+        m2_std_precision_recall_auc: float = None
+
+        for m, category_pr_auc in precision_recall_auc.items():
+            values = list(category_pr_auc.values()) if category is None else [category_pr_auc.get(category, np.nan)]
+
+            if m == method1:
+                m1_avg_precision_recall_auc = np.average(values)
+                m1_std_precision_recall_auc = np.std(values)
+
+            if m == method2:
+                m2_avg_precision_recall_auc = np.average(values)
+                m2_std_precision_recall_auc = np.std(values)
+
+        assert m1_avg_precision_recall_auc is not None
+        assert m1_std_precision_recall_auc is not None
+
+        assert m2_avg_precision_recall_auc is not None
+        assert m2_std_precision_recall_auc is not None
+
+        m1_all_avg_precision_recall_auc.append(m1_avg_precision_recall_auc)
+        m1_all_std_precision_recall_auc.append(m1_std_precision_recall_auc)
+
+        m2_all_avg_precision_recall_auc.append(m2_avg_precision_recall_auc)
+        m2_all_std_precision_recall_auc.append(m2_std_precision_recall_auc)
+
+    assert len(m1_all_avg_precision_recall_auc) == len(m1_all_std_precision_recall_auc)
+    assert len(m2_all_avg_precision_recall_auc) == len(m2_all_std_precision_recall_auc)
+    assert len(m1_all_avg_precision_recall_auc) == len(evals)
+    assert len(m1_all_avg_precision_recall_auc) == len(m2_all_avg_precision_recall_auc)
+
+    fig, ax = plt.subplots(layout="constrained")
+
+    ax.set_title(title)
+
+    x = np.arange(len(evals))
+
+    offset = 0.15
+
+    ax.errorbar(
+        x - offset,
+        m1_all_avg_precision_recall_auc,
+        yerr=m1_all_std_precision_recall_auc,
+        fmt="o",
+        capsize=5,
+        linestyle="none",
+        label=m1_name,
+    )
+
+    ax.errorbar(
+        x + offset,
+        m2_all_avg_precision_recall_auc,
+        yerr=m2_all_std_precision_recall_auc,
+        fmt="o",
+        capsize=5,
+        linestyle="none",
+        label=m2_name,
+    )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([eval.name for eval in evals])
+
+    ax.legend()
+
+    ax.set_ylim(bottom=0.0, top=1.0)
+
+    ax.set_ylabel("Average PR AUC")
 
     save_figure(fig, file)
 
