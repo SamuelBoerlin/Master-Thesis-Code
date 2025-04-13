@@ -1,0 +1,604 @@
+!!python/object:rvs.evaluation.evaluation.EvaluationConfig
+_target: !!python/name:rvs.evaluation.evaluation.Evaluation ''
+embedder: !!python/object:rvs.evaluation.embedder.EmbedderConfig
+  _target: !!python/name:rvs.evaluation.embedder.Embedder ''
+  background_color:
+  - 0.0
+  - 0.0
+  - 0.0
+  device: cuda
+  input_size: 224
+  open_clip_model: ViT-L-14
+  open_clip_model_pretrained: laion2b_s32b_b82k
+embedder_cache_dir: !!python/object/apply:pathlib.PosixPath
+- /
+- nas
+- eval
+- 2025_03_05_1741203112_validation_blender_63_rendering_embeddings
+embedder_cache_validation: true
+embedder_image_cache_required: false
+embedder_text_cache_required: false
+inputs:
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_02_19_1740005246_validation_blender_63_rendering
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_02_23_1740340841_validation_q1_blender_63_rendering_training
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_02_26_1740595164_validation_q2_blender_63_rendering_training
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_03_01_1740869058_validation_q3_blender_63_rendering_training
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_03_05_1741212508_validation_q4_blender_63_rendering_training
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_03_20_1742478677_validation_q1_blender_63_rendering_training_fps_density_samples_fixed
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_03_20_1742479242_validation_q2_blender_63_rendering_training_fps_density_samples_fixed
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_03_20_1742479246_validation_q3_blender_63_rendering_training_fps_density_samples_fixed
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_03_20_1742479250_validation_q4_blender_63_rendering_training_fps_density_samples_fixed
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_03_29_1743280096_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans
+  - config.yaml
+- !!python/object/apply:pathlib.PosixPath
+  - /
+  - nas
+  - eval
+  - 2025_04_01_1743528232_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans_best_training_selection
+  - config.yaml
+lvis_categories: null
+lvis_categories_file: !!python/object/apply:pathlib.PosixPath
+- /
+- home
+- ubuntu
+- repo
+- pipeline
+- dataset
+- eval_categories.json
+lvis_category_names: null
+lvis_category_names_file: !!python/object/apply:pathlib.PosixPath
+- /
+- home
+- ubuntu
+- repo
+- pipeline
+- dataset
+- eval_categories_refined.json
+lvis_download_processes: 8
+lvis_per_category_limit: null
+lvis_uids: null
+lvis_uids_file: !!python/object/apply:pathlib.PosixPath
+- /
+- home
+- ubuntu
+- repo
+- pipeline
+- dataset
+- eval_validation_uids.json
+output_dir: !!python/object/apply:pathlib.PosixPath
+- /
+- nas
+- eval
+- 2025_04_05_1743856589_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans_best_training_selection_results
+pipeline: !!python/object:rvs.pipeline.pipeline.PipelineConfig
+  _target: !!python/name:rvs.pipeline.pipeline.Pipeline ''
+  clustering: !!python/object:rvs.pipeline.clustering.LargestKMeansClusteringConfig
+    _target: !!python/name:rvs.pipeline.clustering.LargestKMeansClustering ''
+    implementation: !!python/object:rvs.pipeline.clustering.KMeansClusteringConfig
+      _target: !!python/name:rvs.pipeline.clustering.KMeansClustering ''
+      normalize: true
+      num_clusters: 2
+      whitening: true
+    num_clusters: 1
+  data: null
+  embeddings: !!python/tuple
+  - !!python/object:rvs.pipeline.embedding.ClipAtScaleEmbeddingConfig
+    scale: 1.0
+  - !!python/object:rvs.pipeline.embedding.DinoEmbeddingConfig {}
+  experiment_name: null
+  field: !!python/object:rvs.pipeline.field.FieldConfig
+    _target: !!python/name:rvs.pipeline.field.Field ''
+    controller: !!python/object:rvs.pipeline.training_controller.TrainingControllerConfig
+      _target: !!python/name:rvs.pipeline.training_controller.TrainingController ''
+      rgb_only_iterations: 0
+    tracking: !!python/object:rvs.pipeline.training_tracker.TrainingTrackerConfig
+      output_dir: null
+      render_plots: false
+      tracked_dicts:
+        Train Loss Dict:
+          clip_loss: clip_loss
+          dino_loss: dino_loss
+          distortion_loss: distortion_loss
+          interlevel_loss: interlevel_loss
+          rgb_loss: rgb_loss
+        Train Metrics Dict:
+          psnr: image_psnr
+      tracked_scalars:
+        Train Loss: train_loss
+    trainer: !!python/object:nerfstudio.engine.trainer.TrainerConfig
+      _target: !!python/name:nerfstudio.engine.trainer.Trainer ''
+      data: null
+      experiment_name: null
+      gradient_accumulation_steps: {}
+      load_checkpoint: null
+      load_config: null
+      load_dir: null
+      load_scheduler: true
+      load_step: null
+      log_gradients: false
+      logging: !!python/object:nerfstudio.configs.base_config.LoggingConfig
+        local_writer: !!python/object:nerfstudio.configs.base_config.LocalWriterConfig
+          _target: &id003 !!python/name:nerfstudio.utils.writer.LocalWriter ''
+          enable: true
+          max_log_size: 10
+          stats_to_track: &id004 !!python/tuple
+          - !!python/object/apply:nerfstudio.utils.writer.EventName
+            - Train Iter (time)
+          - !!python/object/apply:nerfstudio.utils.writer.EventName
+            - Train Rays / Sec
+          - !!python/object/apply:nerfstudio.utils.writer.EventName
+            - Test PSNR
+          - !!python/object/apply:nerfstudio.utils.writer.EventName
+            - Vis Rays / Sec
+          - !!python/object/apply:nerfstudio.utils.writer.EventName
+            - Test Rays / Sec
+          - !!python/object/apply:nerfstudio.utils.writer.EventName
+            - ETA (time)
+        max_buffer_size: 20
+        profiler: basic
+        relative_log_dir: &id005 !!python/object/apply:pathlib.PosixPath []
+        steps_per_log: 10
+      machine: !!python/object:nerfstudio.configs.base_config.MachineConfig
+        device_type: cuda
+        dist_url: auto
+        machine_rank: 0
+        num_devices: 1
+        num_machines: 1
+        seed: 42
+      max_num_iterations: 2000
+      method_name: lerf
+      mixed_precision: true
+      optimizers:
+        camera_opt:
+          optimizer: !!python/object:nerfstudio.engine.optimizers.AdamOptimizerConfig
+            _target: &id001 !!python/name:torch.optim.adam.Adam ''
+            eps: 1.0e-15
+            lr: 0.001
+            max_norm: null
+            weight_decay: 0
+          scheduler: !!python/object:nerfstudio.engine.schedulers.ExponentialDecaySchedulerConfig
+            _target: &id002 !!python/name:nerfstudio.engine.schedulers.ExponentialDecayScheduler ''
+            lr_final: 0.0001
+            lr_pre_warmup: 1.0e-08
+            max_steps: 5000
+            ramp: cosine
+            warmup_steps: 0
+        fields:
+          optimizer: !!python/object:nerfstudio.engine.optimizers.AdamOptimizerConfig
+            _target: *id001
+            eps: 1.0e-15
+            lr: 0.01
+            max_norm: null
+            weight_decay: 0
+          scheduler: !!python/object:nerfstudio.engine.schedulers.ExponentialDecaySchedulerConfig
+            _target: *id002
+            lr_final: 0.001
+            lr_pre_warmup: 1.0e-08
+            max_steps: 30000
+            ramp: cosine
+            warmup_steps: 0
+        lerf:
+          optimizer: !!python/object:nerfstudio.engine.optimizers.RAdamOptimizerConfig
+            _target: !!python/name:torch.optim.radam.RAdam ''
+            eps: 1.0e-15
+            lr: 0.01
+            max_norm: null
+            weight_decay: 1.0e-09
+          scheduler: !!python/object:nerfstudio.engine.schedulers.ExponentialDecaySchedulerConfig
+            _target: *id002
+            lr_final: 0.001
+            lr_pre_warmup: 1.0e-08
+            max_steps: 4000
+            ramp: cosine
+            warmup_steps: 0
+        proposal_networks:
+          optimizer: !!python/object:nerfstudio.engine.optimizers.AdamOptimizerConfig
+            _target: *id001
+            eps: 1.0e-15
+            lr: 0.01
+            max_norm: null
+            weight_decay: 0
+          scheduler: null
+      output_dir: &id006 !!python/object/apply:pathlib.PosixPath
+      - outputs
+      pipeline: !!python/object:lerf.lerf_pipeline.LERFPipelineConfig
+        _target: !!python/name:lerf.lerf_pipeline.LERFPipeline ''
+        datamanager: !!python/object:rvs.lerf.lerf_datamanager.CustomLERFDataManagerConfig
+          _target: !!python/name:rvs.lerf.lerf_datamanager.CustomLERFDataManager ''
+          cache_dir: !!python/object/apply:pathlib.PosixPath
+          - outputs
+          camera_optimizer: null
+          camera_res_scale_factor: 1.0
+          collate_fn: !!python/name:nerfstudio.data.utils.nerfstudio_collate.nerfstudio_collate ''
+          data: null
+          dataparser: !!python/object:nerfstudio.data.dataparsers.nerfstudio_dataparser.NerfstudioDataParserConfig
+            _target: !!python/name:nerfstudio.data.dataparsers.nerfstudio_dataparser.Nerfstudio ''
+            auto_scale_poses: true
+            center_method: poses
+            data: !!python/object/apply:pathlib.PosixPath []
+            depth_unit_scale_factor: 0.001
+            downscale_factor: null
+            eval_interval: 8
+            eval_mode: fraction
+            load_3D_points: false
+            mask_color: null
+            orientation_method: up
+            scale_factor: 1.0
+            scene_scale: 1.0
+            train_split_fraction: 0.99
+          eval_image_indices: !!python/tuple
+          - 0
+          eval_num_images_to_sample_from: -1
+          eval_num_rays_per_batch: 4096
+          eval_num_times_to_repeat_images: -1
+          images_on_gpu: false
+          masks_on_gpu: false
+          patch_size: 1
+          patch_stride_scaler: 0.5
+          patch_tile_size_range: !!python/tuple
+          - 0.05
+          - 0.5
+          patch_tile_size_res: 7
+          pixel_sampler: !!python/object:nerfstudio.data.pixel_samplers.PixelSamplerConfig
+            _target: !!python/name:nerfstudio.data.pixel_samplers.PixelSampler ''
+            fisheye_crop_radius: null
+            ignore_mask: false
+            is_equirectangular: false
+            keep_full_image: false
+            max_num_iterations: 100
+            num_rays_per_batch: 4096
+            rejection_sample_mask: true
+          train_num_images_to_sample_from: -1
+          train_num_rays_per_batch: 4096
+          train_num_times_to_repeat_images: -1
+        model: !!python/object:rvs.lerf.lerf_model.CustomLERFModelConfig
+          _target: !!python/name:rvs.lerf.lerf_model.CustomLERFModel ''
+          appearance_embed_dim: 32
+          average_init_density: 1.0
+          background_color: random
+          base_res: 16
+          camera_optimizer: !!python/object:nerfstudio.cameras.camera_optimizers.CameraOptimizerConfig
+            _target: !!python/name:nerfstudio.cameras.camera_optimizers.CameraOptimizer ''
+            mode: 'off'
+            optimizer: null
+            rot_l2_penalty: 0.001
+            scheduler: null
+            trans_l2_penalty: 0.01
+          clip_loss_weight: 0.1
+          collider_params:
+            far_plane: 6.0
+            near_plane: 2.0
+          disable_scene_contraction: true
+          distortion_loss_mult: 0.002
+          enable_collider: true
+          eval_num_rays_per_chunk: 32768
+          far_plane: 1000.0
+          features_per_level: 2
+          hashgrid_layers: !!python/tuple
+          - 12
+          - 12
+          hashgrid_resolutions: !!python/tuple
+          - !!python/tuple
+            - 16
+            - 128
+          - !!python/tuple
+            - 128
+            - 512
+          hashgrid_sizes: !!python/tuple
+          - 19
+          - 19
+          hidden_dim: 64
+          hidden_dim_color: 64
+          hidden_dim_transient: 64
+          implementation: tcnn
+          interlevel_loss_mult: 1.0
+          log2_hashmap_size: 19
+          loss_coefficients:
+            rgb_loss_coarse: 1.0
+            rgb_loss_fine: 1.0
+          max_res: 2048
+          max_scale: 1.5
+          n_scales: 30
+          near_plane: 0.05
+          num_lerf_samples: 24
+          num_levels: 16
+          num_nerf_samples_per_ray: 48
+          num_proposal_iterations: 2
+          num_proposal_samples_per_ray: !!python/tuple
+          - 256
+          - 96
+          orientation_loss_mult: 0.0001
+          pred_normal_loss_mult: 0.001
+          predict_normals: false
+          prompt: null
+          proposal_initial_sampler: piecewise
+          proposal_net_args_list:
+          - hidden_dim: 16
+            log2_hashmap_size: 17
+            max_res: 128
+            num_levels: 5
+            use_linear: false
+          - hidden_dim: 16
+            log2_hashmap_size: 17
+            max_res: 256
+            num_levels: 5
+            use_linear: false
+          proposal_update_every: 5
+          proposal_warmup: 5000
+          proposal_weights_anneal_max_num_iters: 1000
+          proposal_weights_anneal_slope: 10.0
+          use_appearance_embedding: true
+          use_average_appearance_embedding: true
+          use_gradient_scaling: false
+          use_proposal_weight_anneal: true
+          use_same_proposal_network: false
+          use_single_jitter: true
+        network: !!python/object:lerf.encoders.openclip_encoder.OpenCLIPNetworkConfig
+          _target: !!python/name:lerf.encoders.openclip_encoder.OpenCLIPNetwork ''
+          clip_model_pretrained: laion2b_s34b_b88k
+          clip_model_type: ViT-B-16
+          clip_n_dims: 512
+          negatives: !!python/tuple
+          - object
+          - things
+          - stuff
+          - texture
+      project_name: nerfstudio-project
+      prompt: null
+      relative_model_dir: &id007 !!python/object/apply:pathlib.PosixPath
+      - nerfstudio_models
+      save_only_latest_checkpoint: true
+      start_paused: false
+      steps_per_eval_all_images: 25000
+      steps_per_eval_batch: 500
+      steps_per_eval_image: 500
+      steps_per_save: 2000
+      timestamp: '{timestamp}'
+      use_grad_scaler: false
+      viewer: !!python/object:nerfstudio.configs.base_config.ViewerConfig
+        camera_frustum_scale: 0.1
+        default_composite_depth: true
+        image_format: jpeg
+        jpeg_quality: 75
+        make_share_url: false
+        max_num_display_images: 512
+        num_rays_per_chunk: 32768
+        quit_on_train_completion: true
+        relative_log_filename: viewer_log_filename.txt
+        websocket_host: 0.0.0.0
+        websocket_port: null
+        websocket_port_default: 7007
+      vis: viewer
+  load_scheduler: true
+  logging: !!python/object:nerfstudio.configs.base_config.LoggingConfig
+    local_writer: !!python/object:nerfstudio.configs.base_config.LocalWriterConfig
+      _target: *id003
+      enable: true
+      max_log_size: 10
+      stats_to_track: *id004
+    max_buffer_size: 20
+    profiler: basic
+    relative_log_dir: *id005
+    steps_per_log: 10
+  machine: !!python/object:nerfstudio.configs.base_config.MachineConfig
+    device_type: cuda
+    dist_url: auto
+    machine_rank: 0
+    num_devices: 1
+    num_machines: 1
+    seed: 42
+  method_name: fermat_views.blender_renderer.clip_and_dino.lerf_standard_field.fps_density_sampler.identity_transform.largest_kmeans_clustering.best_training_selection
+  model_file: !!python/object/apply:pathlib.PosixPath
+  - <unknown>
+  optimizers:
+    fields:
+      optimizer: !!python/object:nerfstudio.engine.optimizers.OptimizerConfig
+        _target: *id001
+        eps: 1.0e-08
+        lr: 0.0005
+        max_norm: null
+      scheduler: !!python/object:nerfstudio.engine.schedulers.SchedulerConfig
+        _target: !!python/name:nerfstudio.engine.schedulers.Scheduler ''
+  output_dir: *id006
+  pipeline: !!python/object:nerfstudio.pipelines.base_pipeline.VanillaPipelineConfig
+    _target: !!python/name:nerfstudio.pipelines.base_pipeline.VanillaPipeline ''
+    datamanager: !!python/object:nerfstudio.data.datamanagers.base_datamanager.DataManagerConfig
+      _target: !!python/name:nerfstudio.data.datamanagers.base_datamanager.DataManager ''
+      data: null
+      images_on_gpu: false
+      masks_on_gpu: false
+    model: !!python/object:nerfstudio.models.base_model.ModelConfig
+      _target: !!python/name:nerfstudio.models.base_model.Model ''
+      collider_params:
+        far_plane: 6.0
+        near_plane: 2.0
+      enable_collider: true
+      eval_num_rays_per_chunk: 4096
+      loss_coefficients:
+        rgb_loss_coarse: 1.0
+        rgb_loss_fine: 1.0
+      prompt: null
+  project_name: nerfstudio-project
+  prompt: null
+  relative_model_dir: *id007
+  render_sample_as_plot: false
+  render_sample_clusters_hard_assignment: true
+  render_sample_clusters_of_selected_views: false
+  render_sample_clusters_of_views: null
+  render_sample_positions_of_views: null
+  renderer: !!python/object:rvs.pipeline.renderer.BlenderRendererConfig
+    _target: !!python/name:rvs.pipeline.renderer.BlenderRenderer ''
+    background:
+    - 0
+    - 0
+    - 0
+    - 0
+    blender_binary: !!python/object/apply:pathlib.PosixPath
+    - /
+    - opt
+    - blender
+    - 3.2.2
+    - blender
+    fov: 60
+    height: 1024
+    width: 1024
+  sampler: !!python/object:rvs.pipeline.sampler.FarthestPointSamplingDensityTrimeshPositonSamplerConfig
+    _target: !!python/name:rvs.pipeline.sampler.FarthestPointSamplingDensityTrimeshPositionSampler ''
+    min_num_samples: 250
+    num_samples: 10000
+    samples_per_unit_area: 500
+  selection: !!python/object:rvs.pipeline.selection.MostSimilarToCentroidTrainingViewSelectionConfig
+    _target: !!python/name:rvs.pipeline.selection.MostSimilarToCentroidTrainingViewSelection ''
+  stages: null
+  timestamp: '{timestamp}'
+  transform: !!python/object:rvs.pipeline.transform.IdentityTransformConfig
+    _target: !!python/name:rvs.pipeline.transform.IdentityTransform ''
+  viewer: !!python/object:nerfstudio.configs.base_config.ViewerConfig
+    camera_frustum_scale: 0.1
+    default_composite_depth: true
+    image_format: jpeg
+    jpeg_quality: 75
+    make_share_url: false
+    max_num_display_images: 512
+    num_rays_per_chunk: 32768
+    quit_on_train_completion: false
+    relative_log_filename: viewer_log_filename.txt
+    websocket_host: 0.0.0.0
+    websocket_port: null
+    websocket_port_default: 7007
+  views: !!python/object:rvs.pipeline.views.FermatSpiralViewsConfig
+    _target: !!python/name:rvs.pipeline.views.FermatSpiralViews ''
+    n: 31
+    offset_max_distance: 2.0
+    offset_min_distance: 2.0
+    offset_views: 1
+  vis: wandb
+runtime: !!python/object:rvs.evaluation.evaluation.RuntimeSettings
+  from_stage: !!python/object/apply:rvs.pipeline.stage.PipelineStage
+  - OUTPUT
+  metadata:
+    args:
+    - /home/ubuntu/miniconda3/envs/experiment_2025_04_05_1743856589_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans_best_training_selection_results/bin/ervs
+    - fermat_views.blender_renderer.clip_and_dino.lerf_standard_field.fps_density_sampler.identity_transform.largest_kmeans_clustering.best_training_selection
+    - --lvis-categories-file
+    - /home/ubuntu/repo/pipeline/dataset/eval_categories.json
+    - --lvis-uids-file
+    - /home/ubuntu/repo/pipeline/dataset/eval_validation_uids.json
+    - --inputs
+    - /nas/eval/2025_02_19_1740005246_validation_blender_63_rendering/config.yaml
+    - /nas/eval/2025_02_23_1740340841_validation_q1_blender_63_rendering_training/config.yaml
+    - /nas/eval/2025_02_26_1740595164_validation_q2_blender_63_rendering_training/config.yaml
+    - /nas/eval/2025_03_01_1740869058_validation_q3_blender_63_rendering_training/config.yaml
+    - /nas/eval/2025_03_05_1741212508_validation_q4_blender_63_rendering_training/config.yaml
+    - /nas/eval/2025_03_20_1742478677_validation_q1_blender_63_rendering_training_fps_density_samples_fixed/config.yaml
+    - /nas/eval/2025_03_20_1742479242_validation_q2_blender_63_rendering_training_fps_density_samples_fixed/config.yaml
+    - /nas/eval/2025_03_20_1742479246_validation_q3_blender_63_rendering_training_fps_density_samples_fixed/config.yaml
+    - /nas/eval/2025_03_20_1742479250_validation_q4_blender_63_rendering_training_fps_density_samples_fixed/config.yaml
+    - /nas/eval/2025_03_29_1743280096_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans/config.yaml
+    - /nas/eval/2025_04_01_1743528232_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans_best_training_selection/config.yaml
+    - --pipeline.views.n=31
+    - --pipeline.renderer.blender-binary
+    - /opt/blender/3.2.2/blender
+    - --pipeline.clustering.implementation.num-clusters
+    - '2'
+    - --runtime.from-stage
+    - OUTPUT
+    - --embedder-cache-dir
+    - /nas/eval/2025_03_05_1741203112_validation_blender_63_rendering_embeddings
+    - --lvis-category-names-file
+    - /home/ubuntu/repo/pipeline/dataset/eval_categories_refined.json
+    - --runtime.skip-embedder
+    - 'True'
+    - --runtime.skip-finished
+    - 'True'
+    - --output-dir
+    - /nas/eval/2025_04_05_1743856589_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans_best_training_selection_results
+    run:
+      timestamp: 2025-04-05_124435
+    unix_shell_command: /home/ubuntu/miniconda3/envs/experiment_2025_04_05_1743856589_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans_best_training_selection_results/bin/ervs
+      fermat_views.blender_renderer.clip_and_dino.lerf_standard_field.fps_density_sampler.identity_transform.largest_kmeans_clustering.best_training_selection
+      --lvis-categories-file /home/ubuntu/repo/pipeline/dataset/eval_categories.json
+      --lvis-uids-file /home/ubuntu/repo/pipeline/dataset/eval_validation_uids.json
+      --inputs /nas/eval/2025_02_19_1740005246_validation_blender_63_rendering/config.yaml
+      /nas/eval/2025_02_23_1740340841_validation_q1_blender_63_rendering_training/config.yaml
+      /nas/eval/2025_02_26_1740595164_validation_q2_blender_63_rendering_training/config.yaml
+      /nas/eval/2025_03_01_1740869058_validation_q3_blender_63_rendering_training/config.yaml
+      /nas/eval/2025_03_05_1741212508_validation_q4_blender_63_rendering_training/config.yaml
+      /nas/eval/2025_03_20_1742478677_validation_q1_blender_63_rendering_training_fps_density_samples_fixed/config.yaml
+      /nas/eval/2025_03_20_1742479242_validation_q2_blender_63_rendering_training_fps_density_samples_fixed/config.yaml
+      /nas/eval/2025_03_20_1742479246_validation_q3_blender_63_rendering_training_fps_density_samples_fixed/config.yaml
+      /nas/eval/2025_03_20_1742479250_validation_q4_blender_63_rendering_training_fps_density_samples_fixed/config.yaml
+      /nas/eval/2025_03_29_1743280096_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans/config.yaml
+      /nas/eval/2025_04_01_1743528232_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans_best_training_selection/config.yaml
+      --pipeline.views.n=31 --pipeline.renderer.blender-binary /opt/blender/3.2.2/blender
+      --pipeline.clustering.implementation.num-clusters 2 --runtime.from-stage OUTPUT
+      --embedder-cache-dir /nas/eval/2025_03_05_1741203112_validation_blender_63_rendering_embeddings
+      --lvis-category-names-file /home/ubuntu/repo/pipeline/dataset/eval_categories_refined.json
+      --runtime.skip-embedder True --runtime.skip-finished True --output-dir /nas/eval/2025_04_05_1743856589_validation_blender_63_rendering_training_fps_density_samples_fixed_identity_largest_2_kmeans_best_training_selection_results
+    validated:
+      tracking:
+        git_commit_hash:
+        - 10abd38755d747ac0668fc6670dd9cb76f9302f0
+        lvis_categories_file_hash: 4ff312c768778f2dab648b0aab594b8afbca085e
+        lvis_uids_file_hash: 6cda3c689ba07e617a4961156ea8e34d0652c806
+  override_existing: false
+  partial_results: false
+  results_only: false
+  run_limit: null
+  set_read_only: null
+  skip_embedder: true
+  skip_finished: true
+  skip_validation: false
+  stage_by_stage: null
+  threads: 1
+  to_stage: null
+seed: 42
