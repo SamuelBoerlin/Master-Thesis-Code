@@ -165,6 +165,10 @@ pipeline_components: Dict[PipelineStage, Dict[str, Tuple[str, InstantiateConfig]
             "Views selected from training views that are most similar to cluster embeddings",
             MostSimilarToCentroidTrainingViewSelectionConfig(),
         ),
+        "semantic_similarity_view_selection": (
+            "Views selected from training views that are most similar to cluster embeddings",
+            MostSimilarToCentroidTrainingViewSelectionConfig(),
+        ),
         "spatial_view_selection": (
             "Views are selected based on the spatial positions of the clustered embeddings samples",
             SpatialViewSelectionConfig(),
